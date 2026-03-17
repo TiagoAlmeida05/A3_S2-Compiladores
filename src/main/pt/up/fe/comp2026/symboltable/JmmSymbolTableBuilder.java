@@ -4,20 +4,22 @@ import pt.up.fe.comp.jmm.analysis.table.MethodSymbol;
 import pt.up.fe.comp.jmm.analysis.table.Symbol;
 import pt.up.fe.comp.jmm.analysis.table.Visibility;
 import pt.up.fe.comp.jmm.analysis.table.reflection.Importer;
-import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.analysis.table.type.JmmType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmArrayType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType;
+import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.ast.JmmNode;
 import pt.up.fe.comp.jmm.report.Report;
 import pt.up.fe.comp.jmm.report.Stage;
-import pt.up.fe.comp.jmm.utils.Attributes;
 import pt.up.fe.comp2026.ast.NodeUtils;
 import pt.up.fe.comp2026.ast.TypeUtils;
 import pt.up.fe.comp2026.jmm.ast.JmmAttributes;
 import pt.up.fe.specs.util.SpecsCheck;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static pt.up.fe.comp2026.jmm.ast.JmmKind.*;
 
@@ -51,16 +53,66 @@ public class JmmSymbolTableBuilder {
                 null);
     }
 
+    private List<Symbol> buildFields(JmmNode classDecl) {
+        List<Symbol> fields = new ArrayList<>();
+
+        for (JmmNode varDecl : classDecl.getChildren(VAR_DECL)) {
+            var name = varDecl.get(JmmAttributes.VAR_DECL.NAME);
+
+            // Verifica duplicados
+            if (fields.stream().anyMatch(f -> f.name().equals(name))) {
+                reports.add(newError(varDecl, "Field '" + name + "' already declared"));
+                continue; // ignora este campo duplicado
+            }
+
+            var typeNode = varDecl.getChild(0);
+            var type = buildType(typeNode);
+
+            fields.add(new Symbol(type, name));
+        }
+
+        return fields;
+    }
+
+    private JmmType buildType(JmmNode typeNode) {
+
+        if (INT_TYPE.check(typeNode)) {
+            return JmmPrimitiveType.INT;
+        }
+
+        if (BOOLEAN_TYPE.check(typeNode)) {
+            return JmmPrimitiveType.BOOLEAN;
+        }
+
+        if (CLASS_TYPE.check(typeNode)) {
+            var name = typeNode.get("name");
+            // ver abaixo
+            return JmmClassType.ofInstance(name, false);
+        }
+
+        if (ARRAY_TYPE.check(typeNode)) {
+            var base = buildType(typeNode.getChild(0));
+            int dimension = typeNode.getInteger("dimension", 1); // se tiveres essa info, senão usa 1
+            return JmmArrayType.of(base, dimension);
+        }
+
+        throw new RuntimeException("Unknown type: " + typeNode);
+    }
+
+
     public static SymbolTableBuilderResult build(JmmNode root) {
         return new JmmSymbolTableBuilder(root).buildInternal();
     }
 
     private SymbolTableBuilderResult buildInternal() {
 
-
-        var packageDecl = root.getChildren(PACKAGE_DECL).getFirst();
+        var packageDecls = root.getChildren(PACKAGE_DECL);
+        if (packageDecls.size() > 1)
+            reports.add(newError(packageDecls.get(1), "Found more than one package"));
+        var packageDecl = packageDecls.getFirst();
         var packagePathList = packageDecl.getObjectAsList("path", String.class);
         var packagePath = String.join(".", packagePathList);
+        //verificação:ver se tem mais um packe«age, tirar o getFirst e ver se tem mais, ver o tamanho, ver se tem mais do que um package encontrado
 
         var classDecl = root.getObject("classNode", JmmNode.class);
         SpecsCheck.checkArgument(CLASS_DECL.check(classDecl), () -> "Expected a class declaration: " + classDecl);
@@ -74,10 +126,11 @@ public class JmmSymbolTableBuilder {
         }
         declaredClasses.put(className, fullyQualifiedName);
 
+        var fields = buildFields(classDecl);
 
         var methods = buildMethods(classDecl);
 
-        var symbolTable = new JmmSymbolTable(imports, fullyQualifiedName, null, Collections.emptyList(), methods, importer);
+        var symbolTable = new JmmSymbolTable(imports, fullyQualifiedName, null, fields, methods, importer);
 
         return new SymbolTableBuilderResult(symbolTable, reports);
     }
@@ -104,7 +157,7 @@ public class JmmSymbolTableBuilder {
                 .map(varDecl -> new Symbol(TypeUtils.intType(), varDecl.get(JmmAttributes.VAR_DECL.NAME)))
                 .toList();
 
-        var visibility =  Visibility.PUBLIC;
+        var visibility = Visibility.PUBLIC;
         var isStatic = method.getBoolean(JmmAttributes.METHOD_DECL.IS_STATIC, false);
         return new MethodSymbol(methodName, returnType, params, locals, isStatic, visibility);
     }

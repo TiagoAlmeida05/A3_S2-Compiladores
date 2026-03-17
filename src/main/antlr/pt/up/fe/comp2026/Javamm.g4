@@ -61,14 +61,13 @@ classDecl
     ;
 
 // Types
-type
-    : baseType ('[' ']')*                      #ArrayType
-    ;
 
-baseType
-    : INT                                      #IntType
-    | BOOLEAN                                  #BooleanType
-    | ID                                       #ClassType
+type
+    : typeNode=type '[' ']'                     #ArrayType
+    | name=INT                                  #IntType
+    | name=BOOLEAN                              #BooleanType
+    | name=VOID                                 #VoidType
+    | name=ID                                   #ClassType
     ;
 
 methodType
