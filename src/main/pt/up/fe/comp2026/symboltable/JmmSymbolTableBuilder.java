@@ -95,15 +95,52 @@ public class JmmSymbolTableBuilder {
         return new SymbolTableBuilderResult(symbolTable, reports);
     }
 
-    private List<Symbol> buildFields(JmmNode classDecl) {
-        var typeUtils = TypeUtils.with(null);
 
-        return classDecl.getChildren(VAR_DECL).stream()
-                .map(varDecl -> new Symbol(
-                        typeUtils.convertType(varDecl.getChild(0)), // Primeiro filho é o tipo
-                        varDecl.get("name")                        // Atributo name é o identificador
-                ))
-                .toList();
+    private List<Symbol> buildFields(JmmNode classDecl) {
+        List<Symbol> fields = new ArrayList<>();
+
+
+        for (JmmNode varDecl : classDecl.getChildren(VAR_DECL)) {
+            var name = varDecl.get(JmmAttributes.VAR_DECL.NAME);
+
+            // Verifica duplicados
+            if (fields.stream().anyMatch(f -> f.name().equals(name))) {
+                reports.add(newError(varDecl, "Field '" + name + "' already declared"));
+                continue; // ignora este campo duplicado
+            }
+
+            var typeNode = varDecl.getChild(0);
+            var type = buildType(typeNode);
+
+            fields.add(new Symbol(type, name));
+        }
+
+        return fields;
+    }
+
+    private JmmType buildType(JmmNode typeNode) {
+
+        if (INT_TYPE.check(typeNode)) {
+            return JmmPrimitiveType.INT;
+        }
+
+        if (BOOLEAN_TYPE.check(typeNode)) {
+            return JmmPrimitiveType.BOOLEAN;
+        }
+
+        if (CLASS_TYPE.check(typeNode)) {
+            var name = typeNode.get("name");
+            // ver abaixo
+            return JmmClassType.ofInstance(name, false);
+        }
+
+        if (ARRAY_TYPE.check(typeNode)) {
+            var base = buildType(typeNode.getChild(0));
+            int dimension = typeNode.getInteger("dimension", 1); // se tiveres essa info, senão usa 1
+            return JmmArrayType.of(base, dimension);
+        }
+
+        throw new RuntimeException("Unknown type: " + typeNode);
     }
 
 
