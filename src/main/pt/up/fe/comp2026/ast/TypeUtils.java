@@ -43,9 +43,17 @@ public class TypeUtils {
     public JmmType convertType(JmmNode typeNode) {
         assert (TYPE.check(typeNode));
 
-        System.out.println("[TODO] TypeUtils.convertType(): Implement for classes and arrays");
+        if (typeNode.getKind().equals("ArrayType")) {
+            var baseType = convertType(typeNode.getChild(0));
+            return new JmmArrayType(baseType, 1);
+        }
+
         var name = typeNode.get("name");
-        return JmmPrimitiveType.fromString(name).orElseThrow();
+        var primitive = JmmPrimitiveType.fromString(name);
+        if (primitive.isPresent()) {
+            return primitive.get();
+        }
+        return JmmClassType.ofInstance(name, false);
     }
 
 

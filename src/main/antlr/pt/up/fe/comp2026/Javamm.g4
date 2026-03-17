@@ -132,8 +132,7 @@ stmt
     : '{' stmt* '}'                                  #BlockStmt
 
     // Control Flow
-    | IF '(' cond=expr ')' thenStmt=stmt ELSE elseStmt=stmt  #IfElseStmt
-    | IF '(' cond=expr ')' thenStmt=stmt                     #IfStmt
+    | IF '(' cond=expr ')' thenStmt=stmt (options {greedy=true;}: ELSE elseStmt=stmt)? #IfElseStmt
 
     | FOR '(' init=forInit ';' cond=expr ';' iter=forIter ')'
      body=stmt                                              #ForStmt
