@@ -100,8 +100,8 @@ public class JmmSymbolTableBuilder {
 
         return classDecl.getChildren(VAR_DECL).stream()
                 .map(varDecl -> new Symbol(
-                        typeUtils.convertType(varDecl.getChild(0)), // Primeiro filho é o tipo
-                        varDecl.get("name")                        // Atributo name é o identificador
+                        typeUtils.convertType(getTypeNode(varDecl)), // Primeiro filho é o tipo
+                        varDecl.get("name")                          // Atributo name é o identificador
                 ))
                 .toList();
     }
@@ -118,16 +118,22 @@ public class JmmSymbolTableBuilder {
 
     private MethodSymbol buildMethod(JmmNode method) {
         var methodName = method.get("name");
+        var typeUtils= TypeUtils.with(null);
 
-        System.out.println("[TODO] JmmSymbolTableBuilder.buildMethod(): Assuming return type of method is always int, and always has a single int parameter, needs to be expanded");
-        var returnType = TypeUtils.intType();
+        var returnTypeNode = getTypeNode(method);
+        var returnType = typeUtils.convertType(returnTypeNode);
 
-
-        var params = List.of(new Symbol(TypeUtils.intType(), method.getChildren(PARAM).getFirst().get(JmmAttributes.PARAM.NAME)));
-
-        System.out.println("[TODO] JmmSymbolTableBuilder.buildMethod(): Assuming all VarDecls are ints, needs to be expanded");
+        var params = method.getChildren(PARAM).stream()
+                .map(param -> new Symbol(
+                        typeUtils.convertType(getTypeNode(param)),
+                        param.get(JmmAttributes.PARAM.NAME)
+                ))
+                .toList();
         var locals = method.getChildren(VAR_DECL).stream()
-                .map(varDecl -> new Symbol(TypeUtils.intType(), varDecl.get(JmmAttributes.VAR_DECL.NAME)))
+                .map(varDecl -> new Symbol(
+                        typeUtils.convertType(getTypeNode(varDecl)),
+                        varDecl.get(JmmAttributes.VAR_DECL.NAME)
+                ))
                 .toList();
 
         var visibility =  Visibility.PUBLIC;
@@ -135,5 +141,16 @@ public class JmmSymbolTableBuilder {
         return new MethodSymbol(methodName, returnType, params, locals, isStatic, visibility);
     }
 
-
+    private JmmNode getTypeNode(JmmNode parentNode) {
+        return parentNode.getChildren().stream()
+                .filter(child -> child.getKind().toString().toUpperCase().contains("TYPE"))
+                .findFirst()
+                .orElseThrow(() -> {
+                    List<String> childrenKinds = parentNode.getChildren().stream()
+                                                          .map(c -> c.getKind().toString())
+                                                          .toList();
+                    return new RuntimeException("Could not find a type for node " + parentNode.getKind().toString()
+                                                + ". Availabloe children kinds: " + childrenKinds);
+                });
+    }
 }

@@ -41,16 +41,25 @@ public class TypeUtils {
     }
 
     public JmmType convertType(JmmNode typeNode) {
-        assert (TYPE.check(typeNode));
 
-        if (typeNode.getKind().equals("ArrayType")) {
+        String kind = typeNode.getKind().toString().toUpperCase();
+
+        if(kind.contains("METHOD")) {
+            if(typeNode.getNumChildren() > 0) {
+                return convertType(typeNode.getChild(0));
+            }
+            return JmmPrimitiveType.fromString("void").get();
+        }
+
+        if(kind.contains("ARRAY")) {
             var baseType = convertType(typeNode.getChild(0));
             return new JmmArrayType(baseType, 1);
         }
 
-        var name = typeNode.get("name");
+        var name = typeNode.getOptional("name").orElse("");
         var primitive = JmmPrimitiveType.fromString(name);
-        if (primitive.isPresent()) {
+
+        if(primitive.isPresent()){
             return primitive.get();
         }
         return JmmClassType.ofInstance(name, false);
