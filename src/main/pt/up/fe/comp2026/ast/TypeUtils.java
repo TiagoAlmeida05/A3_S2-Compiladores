@@ -53,7 +53,12 @@ public class TypeUtils {
         if (primitive.isPresent()) {
             return primitive.get();
         }
-        return JmmClassType.ofInstance(name, false);
+
+        var qualifiedName = table.getImportedFullyQualifiedName(name)
+                .orElse(name.equals(table.getClassName()) ? table.getFullyQualifiedName() : name);
+
+        return JmmClassType.ofInstance(qualifiedName, false);
+
     }
 
 

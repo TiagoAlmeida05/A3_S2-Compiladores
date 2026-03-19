@@ -4,20 +4,21 @@ import pt.up.fe.comp.jmm.analysis.table.MethodSymbol;
 import pt.up.fe.comp.jmm.analysis.table.Symbol;
 import pt.up.fe.comp.jmm.analysis.table.Visibility;
 import pt.up.fe.comp.jmm.analysis.table.reflection.Importer;
-import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.analysis.table.type.JmmType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmArrayType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType;
+import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.ast.JmmNode;
 import pt.up.fe.comp.jmm.report.Report;
 import pt.up.fe.comp.jmm.report.Stage;
-import pt.up.fe.comp.jmm.utils.Attributes;
 import pt.up.fe.comp2026.ast.NodeUtils;
-import pt.up.fe.comp2026.ast.TypeUtils;
 import pt.up.fe.comp2026.jmm.ast.JmmAttributes;
 import pt.up.fe.specs.util.SpecsCheck;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static pt.up.fe.comp2026.jmm.ast.JmmKind.*;
 
@@ -119,9 +120,16 @@ public class JmmSymbolTableBuilder {
     }
 
     private JmmType buildType(JmmNode typeNode) {
+        if (METHOD_TYPE.check(typeNode)) {
+            return buildType(typeNode.getChild(0));
+        }
 
         if (INT_TYPE.check(typeNode)) {
             return JmmPrimitiveType.INT;
+        }
+
+        if (VOID_TYPE.check(typeNode)) {       // <-- faltava este caso
+            return JmmPrimitiveType.VOID;
         }
 
         if (BOOLEAN_TYPE.check(typeNode)) {
@@ -129,9 +137,11 @@ public class JmmSymbolTableBuilder {
         }
 
         if (CLASS_TYPE.check(typeNode)) {
-            var name = typeNode.get("name");
-            // ver abaixo
-            return JmmClassType.ofInstance(name, false);
+            var simpleName = typeNode.get("name");
+            // Resolve o nome qualificado: verifica imports ou a própria classe
+            var qualifiedName = resolveClassName(simpleName);
+            return JmmClassType.ofInstance(qualifiedName, false);
+
         }
 
         if (ARRAY_TYPE.check(typeNode)) {
@@ -143,6 +153,21 @@ public class JmmSymbolTableBuilder {
         throw new RuntimeException("Unknown type: " + typeNode);
     }
 
+    private String resolveClassName(String simpleName) {
+        // Verifica se é a própria classe
+        if (simpleName.equals(className)) {
+            return declaredClasses.get(className); // nome qualificado
+        }
+        // Verifica se está nos imports
+        var imported = imports.stream()
+                .filter(i -> i.equals(simpleName) || i.endsWith("." + simpleName))
+                .findFirst();
+        if (imported.isPresent()) {
+            return imported.get();
+        }
+        // Se não encontrar, usa o nome simples (para tipos externos ainda não importados)
+        return simpleName;
+    }
 
 
     private List<MethodSymbol> buildMethods(JmmNode classDecl) {
@@ -156,18 +181,29 @@ public class JmmSymbolTableBuilder {
     private MethodSymbol buildMethod(JmmNode method) {
         var methodName = method.get("name");
 
-        System.out.println("[TODO] JmmSymbolTableBuilder.buildMethod(): Assuming return type of method is always int, and always has a single int parameter, needs to be expanded");
-        var returnType = TypeUtils.intType();
+        var returnTypeNode = method.getChildren(METHOD_TYPE).stream()
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("No return type in method: " + methodName));
+        var returnType = buildType(returnTypeNode);
 
 
-        var params = List.of(new Symbol(TypeUtils.intType(), method.getChildren(PARAM).getFirst().get(JmmAttributes.PARAM.NAME)));
-
-        System.out.println("[TODO] JmmSymbolTableBuilder.buildMethod(): Assuming all VarDecls are ints, needs to be expanded");
-        var locals = method.getChildren(VAR_DECL).stream()
-                .map(varDecl -> new Symbol(TypeUtils.intType(), varDecl.get(JmmAttributes.VAR_DECL.NAME)))
+        // Parâmetros reais (lista pode ser vazia)
+        var params = method.getChildren(PARAM).stream()
+                .map(param -> new Symbol(
+                        buildType(param.getChild(0)),
+                        param.get(JmmAttributes.PARAM.NAME)
+                ))
                 .toList();
 
-        var visibility =  Visibility.PUBLIC;
+        // Variáveis locais reais
+        var locals = method.getChildren(VAR_DECL).stream()
+                .map(varDecl -> new Symbol(
+                        buildType(varDecl.getChild(0)),
+                        varDecl.get(JmmAttributes.VAR_DECL.NAME)
+                ))
+                .toList();
+
+        var visibility = Visibility.PUBLIC;
         var isStatic = method.getBoolean(JmmAttributes.METHOD_DECL.IS_STATIC, false);
         return new MethodSymbol(methodName, returnType, params, locals, isStatic, visibility);
     }
