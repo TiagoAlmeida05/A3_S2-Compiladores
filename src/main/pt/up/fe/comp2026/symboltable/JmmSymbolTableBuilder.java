@@ -88,10 +88,17 @@ public class JmmSymbolTableBuilder {
         }
         declaredClasses.put(className, fullyQualifiedName);
 
+        // Lê superclass se existir
+        String superQualifiedName = null;
+        if (classDecl.hasAttribute("superclass")) {
+            var superName = classDecl.get("superclass");
+            superQualifiedName = resolveClassName(superName);
+        }
+
         var fields = buildFields(classDecl);
         var methods = buildMethods(classDecl);
 
-        var symbolTable = new JmmSymbolTable(imports, fullyQualifiedName, null, fields, methods, importer);
+        var symbolTable = new JmmSymbolTable(imports, fullyQualifiedName, superQualifiedName, fields, methods, importer);
 
         return new SymbolTableBuilderResult(symbolTable, reports);
     }
