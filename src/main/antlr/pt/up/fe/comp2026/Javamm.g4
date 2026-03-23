@@ -76,9 +76,9 @@ methodType
     ;
 
 visibility
-    : PUBLIC
-    | PRIVATE
-    | PROTECTED
+    : value = PUBLIC
+    | value = PRIVATE
+    | value = PROTECTED
     ;
 
 // Variables and Parameters

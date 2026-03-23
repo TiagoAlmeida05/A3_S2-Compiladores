@@ -15,10 +15,7 @@ import pt.up.fe.comp2026.ast.NodeUtils;
 import pt.up.fe.comp2026.jmm.ast.JmmAttributes;
 import pt.up.fe.specs.util.SpecsCheck;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import static pt.up.fe.comp2026.jmm.ast.JmmKind.*;
 
@@ -74,7 +71,10 @@ public class JmmSymbolTableBuilder {
             var qN = imp.getChild(0); // qualifiedName
             var importPathList = qN.getObjectAsList("parts", String.class);
             var importPath = String.join(".", importPathList);
-            imports.add(importPath);
+            // Ignora duplicados
+            if (!imports.contains(importPath)) {
+                imports.add(importPath);
+            }
         }
 
         var classDecl = root.getObject("classNode", JmmNode.class);
@@ -89,11 +89,30 @@ public class JmmSymbolTableBuilder {
         declaredClasses.put(className, fullyQualifiedName);
 
         // Lê superclass se existir
+        // Lê superclass se existir
         String superQualifiedName = null;
         if (classDecl.hasAttribute("superclass")) {
             var superName = classDecl.get("superclass");
+
+            if (superName.equals(className)) {
+                reports.add(newError(classDecl,
+                        "Class '" + className + "' cannot extend itself"));
+            }
+
+            boolean isImplicitlyImported = superName.equals("Object");
+
+            boolean isImported = imports.stream()
+                    .anyMatch(i -> i.equals(superName) || i.endsWith("." + superName));
+
+            if (!isImported && !isImplicitlyImported) {
+                reports.add(newError(classDecl,
+                        "Superclass '" + superName + "' is not imported"));
+            }
+
+            // resolve o nome qualificado (mantém o que já tinhas)
             superQualifiedName = resolveClassName(superName);
         }
+
 
         var fields = buildFields(classDecl);
         var methods = buildMethods(classDecl);
@@ -147,7 +166,10 @@ public class JmmSymbolTableBuilder {
             var simpleName = typeNode.get("name");
             // Resolve o nome qualificado: verifica imports ou a própria classe
             var qualifiedName = resolveClassName(simpleName);
-            return JmmClassType.ofInstance(qualifiedName, false);
+            boolean isImported = imports.stream()
+                    .anyMatch(i -> i.equals(simpleName) || i.endsWith("." + simpleName));
+
+            return JmmClassType.ofInstance(qualifiedName, isImported);
 
         }
 
@@ -176,6 +198,32 @@ public class JmmSymbolTableBuilder {
         return simpleName;
     }
 
+    private List<Symbol> buildLocals(JmmNode method, List<Symbol> params) {
+        List<Symbol> locals = new ArrayList<>();
+        // Cria um HashSet para nomes existentes (parâmetros + locais anteriores)
+        Set<String> names = new HashSet<>();
+        // Adiciona parâmetros
+        for (var p : params) {
+            names.add(p.name());
+        }
+
+        for (var varDecl : method.getChildren(VAR_DECL)) {
+            String varName = varDecl.get(JmmAttributes.VAR_DECL.NAME);
+            JmmType varType = buildType(varDecl.getChild(0));
+
+            if (names.contains(varName)) {
+                // Se já existe (parâmetro ou variável local anterior), erro
+                reports.add(newError(varDecl, "Duplicate local variable name '" + varName +
+                        "' in method '" + method.get("name") + "'"));
+            } else {
+                locals.add(new Symbol(varType, varName));
+                names.add(varName);
+            }
+        }
+
+        return locals;
+    }
+
 
     private List<MethodSymbol> buildMethods(JmmNode classDecl) {
 
@@ -186,32 +234,44 @@ public class JmmSymbolTableBuilder {
     }
 
     private MethodSymbol buildMethod(JmmNode method) {
-        var methodName = method.get("name");
+        String methodName = method.get("name");
 
+        // Retorna o tipo do método
         var returnTypeNode = method.getChildren(METHOD_TYPE).stream()
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("No return type in method: " + methodName));
-        var returnType = buildType(returnTypeNode);
+        JmmType returnType = buildType(returnTypeNode);
 
+        // Constrói parâmetros
+        var paramListNodes = method.getChildren(PARAM_LIST);
+        var paramNodes = paramListNodes.isEmpty()
+                ? method.getChildren(PARAM)
+                : paramListNodes.getFirst().getChildren(PARAM);
 
-        // Parâmetros reais (lista pode ser vazia)
-        var params = method.getChildren(PARAM).stream()
-                .map(param -> new Symbol(
-                        buildType(param.getChild(0)),
-                        param.get(JmmAttributes.PARAM.NAME)
-                ))
-                .toList();
+        List<Symbol> params = new ArrayList<>();
+        for (var paramNode : paramNodes) {
+            String paramName = paramNode.get(JmmAttributes.PARAM.NAME);
+            JmmType paramType = buildType(paramNode.getChild(0));
 
-        // Variáveis locais reais
-        var locals = method.getChildren(VAR_DECL).stream()
-                .map(varDecl -> new Symbol(
-                        buildType(varDecl.getChild(0)),
-                        varDecl.get(JmmAttributes.VAR_DECL.NAME)
-                ))
-                .toList();
+            boolean exists = params.stream().anyMatch(s -> s.name().equals(paramName));
+            if (exists) {
+                reports.add(newError(paramNode,
+                        "Duplicate parameter name '" + paramName + "' in method '" + methodName + "'"));
+            } else {
+                params.add(new Symbol(paramType, paramName));
+            }
+        }
 
-        var visibility = Visibility.PUBLIC;
-        var isStatic = method.getBoolean(JmmAttributes.METHOD_DECL.IS_STATIC, false);
+        // Constrói variáveis locais e checa conflito com parâmetros
+        List<Symbol> locals = buildLocals(method, params);
+
+        // Visibilidade e static
+        var visibilityNodes = method.getChildren(VISIBILITY);
+        Visibility visibility = Visibility.PACKAGE_PROTECTED;
+        if (!visibilityNodes.isEmpty()) {
+            visibility = Visibility.fromString(visibilityNodes.getFirst().get("value"));
+        }
+        boolean isStatic = method.getBoolean(JmmAttributes.METHOD_DECL.IS_STATIC, false);
         return new MethodSymbol(methodName, returnType, params, locals, isStatic, visibility);
     }
 

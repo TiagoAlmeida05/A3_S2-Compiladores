@@ -1,21 +1,13 @@
 package pt.up.fe.comp2026.ast;
 
-import pt.up.fe.comp.jmm.analysis.table.MethodSymbol;
 import pt.up.fe.comp.jmm.analysis.table.Signature;
 import pt.up.fe.comp.jmm.analysis.table.SymbolTable;
-import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.analysis.table.type.JmmType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmArrayType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType;
+import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.ast.JmmNode;
-import pt.up.fe.comp2026.jmm.ast.JmmKind;
 import pt.up.fe.comp2026.symboltable.JmmSymbolTable;
-import pt.up.fe.specs.util.SpecsCheck;
-import pt.up.fe.specs.util.exceptions.NotImplementedException;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
 
 import static pt.up.fe.comp2026.jmm.ast.JmmKind.*;
 
@@ -41,8 +33,12 @@ public class TypeUtils {
     }
 
     public JmmType convertType(JmmNode typeNode) {
-        assert (TYPE.check(typeNode));
-
+        if (typeNode.getKind().equals("MethodType")) {
+            return convertType(typeNode.getChild(0));
+        }
+        if (typeNode.getKind().equals("VoidType")) {
+            return JmmPrimitiveType.VOID;
+        }
         if (typeNode.getKind().equals("ArrayType")) {
             var baseType = convertType(typeNode.getChild(0));
             return new JmmArrayType(baseType, 1);
@@ -86,8 +82,10 @@ public class TypeUtils {
         // Get name of the method
         var methodName = methodDecl.get("name");
 
-        System.out.println("[TODO] TypeUtils.getMethodDeclSignature(): Supporting only methods with a single parameter that is an int, needs to be expanded");
-        var params = List.of(intType());
+        //System.out.println("[TODO] TypeUtils.getMethodDeclSignature(): Supporting only methods with a single parameter that is an int, needs to be expanded");
+        var params = methodDecl.getChildren(PARAM).stream()
+                .map(param -> convertType(param.getChild(0)))
+                .toList();
 
         // Create method signature with method name and types of parameters
         return new Signature(methodName, params);
