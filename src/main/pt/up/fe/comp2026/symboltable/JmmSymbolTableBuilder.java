@@ -71,7 +71,9 @@ public class JmmSymbolTableBuilder {
             var qN = imp.getChild(0); // qualifiedName
             var importPathList = qN.getObjectAsList("parts", String.class);
             var importPath = String.join(".", importPathList);
-            // Ignora duplicados
+            if (!importer.inClassPath(importPath)) {
+                reports.add(newError(imp, "Imported class '" + importPath + "' does not exist"));
+            }
             if (!imports.contains(importPath)) {
                 imports.add(importPath);
             }
@@ -83,13 +85,22 @@ public class JmmSymbolTableBuilder {
         this.className = classDecl.get("name");
         var fullyQualifiedName = packagePath.isEmpty() ? className : packagePath + "." + className;
 
+        for (String importPath : imports) {
+            String importedSimpleName = importPath.contains(".")
+                    ? importPath.substring(importPath.lastIndexOf('.') + 1)
+                    : importPath;
+            if (importedSimpleName.equals(className)) {
+                reports.add(newError(classDecl,
+                        "Class '" + className + "' conflicts with imported class '" + importPath + "'"));
+                break;
+            }
+        }
+
         if (declaredClasses.containsKey(className)) {
             reports.add(newError(root, "'" + className + "' is already defined in this compilation unit"));
         }
         declaredClasses.put(className, fullyQualifiedName);
 
-        // Lê superclass se existir
-        // Lê superclass se existir
         String superQualifiedName = null;
         if (classDecl.hasAttribute("superclass")) {
             var superName = classDecl.get("superclass");
