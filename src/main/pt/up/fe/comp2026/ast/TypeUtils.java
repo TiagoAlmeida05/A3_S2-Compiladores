@@ -69,11 +69,22 @@ public class TypeUtils {
             case INTEGER_LITERAL -> intType();
             case BINARY_EXPR -> getBinExprType(expr);
             case VAR_REF_EXPR -> getVarExprType(expr);
+            case BOOLEAN_LITERAL -> JmmPrimitiveType.BOOLEAN;
+            case THIS_EXPR -> JmmClassType.ofInstance(table.getFullyQualifiedName(), false);
+            case NEW_OBJECT_EXPR -> {
+                String className = expr.get("name");
+                yield JmmClassType.ofInstance(className, false);
+            }
+            case NEW_INT_ARRAY_EXPR -> new JmmArrayType(JmmPrimitiveType.INT, 1);
+            case UNARY_OP, PREFIX_OP -> getExprType(expr.getChild(0));
+            case PRIORITY_EXPR -> getExprType(expr.getChild(0));
+
+            case ARRAY_LENGTH_EXPR -> JmmPrimitiveType.INT;
+
             default ->
                     throw new UnsupportedOperationException("Can't compute type for expression kind '" + expr.getKind() + "'");
         };
     }
-
 
     public Signature getMethodDeclSignature(JmmNode methodDecl) {
         // Ensure given node is a MethodDecl
@@ -99,6 +110,7 @@ public class TypeUtils {
 
         return switch (operator) {
             case "+", "*" -> intType();
+            case "<", "&&" -> JmmPrimitiveType.BOOLEAN;
             default ->
                     throw new RuntimeException("Unknown operator '" + operator + "' of expression '" + binaryExpr + "'");
         };
@@ -106,7 +118,32 @@ public class TypeUtils {
 
     private JmmType getVarExprType(JmmNode varRefExpr) {
         System.out.println("[TODO] TypeUtils.getVarExprType(): Implement type inference for VarExpr. You will need to determine in which method the VarRef is and use the symbol table");
-        return intType();
+
+        String name = varRefExpr.get("name");
+
+        var methodNode = varRefExpr.getAncestor(METHOD_DECL)
+                .orElseThrow(() -> new RuntimeException("VarRef outside method"));
+
+        var signature = getMethodDeclSignature(methodNode);
+        var method = table.getMethod(signature)
+                .orElseThrow(() -> new RuntimeException("Method not found"));
+
+        var param = method.getParameter(name);
+        if (param.isPresent()) {
+            return param.get().type();
+        }
+
+        var local = method.getLocalVariable(name);
+        if (local.isPresent()) {
+            return local.get().type();
+        }
+
+        var field = table.getField(name);
+        if (field.isPresent()) {
+            return field.get().type();
+        }
+
+        throw new RuntimeException("Variable not found: " + name);
     }
 
 }
