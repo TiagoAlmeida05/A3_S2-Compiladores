@@ -30,7 +30,8 @@ public class JmmAnalysisImpl implements JmmAnalysis {
         return List.of(
             new UndeclaredVariable(),
             new TypeCheckVisitor(),
-            new AssignmentCheckVisitor()
+            new AssignmentCheckVisitor(),
+            new StatementCheckVisitor()
         );
     }
 

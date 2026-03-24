@@ -28,28 +28,27 @@ public class TypeUtils {
     }
 
     public JmmType convertType(JmmNode typeNode) {
-        if (typeNode.getKind().equals("MethodType")) {
+        if (METHOD_TYPE.check(typeNode)) {
             return convertType(typeNode.getChild(0));
         }
-        if (typeNode.getKind().equals("VoidType")) {
+        if (VOID_TYPE.check(typeNode)) {
             return JmmPrimitiveType.VOID;
         }
-        if (typeNode.getKind().equals("ArrayType")) {
-            var baseType = convertType(typeNode.getChild(0));
-            return new JmmArrayType(baseType, 1);
+        if (ARRAY_TYPE.check(typeNode)) {
+            return new JmmArrayType(convertType(typeNode.getChild(0)), 1);
+        }
+        if (INT_TYPE.check(typeNode)) {
+            return JmmPrimitiveType.INT;
+        }
+        if (BOOLEAN_TYPE.check(typeNode)) {
+            return JmmPrimitiveType.BOOLEAN;
         }
 
         var name = typeNode.get("name");
-        var primitive = JmmPrimitiveType.fromString(name);
-        if (primitive.isPresent()) {
-            return primitive.get();
-        }
-
-        var qualifiedName = table.getImportedFullyQualifiedName(name)
-                .orElse(name.equals(table.getClassName()) ? table.getFullyQualifiedName() : name);
-
+        var qualifiedName = table.getImportedFullyQualifiedName(name).orElse(name.equals(table.getClassName()) ? table.getFullyQualifiedName() : name);
         return JmmClassType.ofInstance(qualifiedName, false);
     }
+
 
     public JmmType getExprType(JmmNode expr) {
         return switch (expr.getKind()) {
@@ -94,16 +93,13 @@ public class TypeUtils {
                 if (arrayType instanceof JmmArrayType arr) {
                     yield arr.itemType();
                 }
-                yield intType(); // fallback
+                yield intType();
             }
 
-            // NOVO: chamada de metodo obj.method(...)
             case METHOD_CALL_EXPR -> getMethodCallType(expr);
 
-            // NOVO: chamada implícita method(...) === this.method(...)
             case IMPLICIT_THIS_CALL_EXPR -> getImplicitThisCallType(expr);
 
-            // NOVO: acesso a campo obj.field ou classe importada estática
             case VAR_ACCESS -> getVarAccessType(expr);
 
             default -> throw new UnsupportedOperationException(
@@ -174,7 +170,6 @@ public class TypeUtils {
         try {
             targetType = getExprType(target);
         } catch (Exception e) {
-            // Se não conseguimos determinar o tipo do target, assumimos tipo desconhecido
             return JmmClassType.ofInstance("unknown", false);
         }
 
@@ -196,8 +191,6 @@ public class TypeUtils {
                 }
             }
         }
-
-        // Fallback para tipos não resolvidos (ex: métodos de classes externas)
         return JmmClassType.ofInstance("unknown", false);
     }
 
@@ -211,8 +204,6 @@ public class TypeUtils {
     }
 
     private JmmType getVarAccessType(JmmNode varAccess) {
-        // target.field — não é chamada de método, é acesso a campo
-        // Para já, retorna unknown — será refinado nos Calls
         return JmmClassType.ofInstance("unknown", false);
     }
 }
