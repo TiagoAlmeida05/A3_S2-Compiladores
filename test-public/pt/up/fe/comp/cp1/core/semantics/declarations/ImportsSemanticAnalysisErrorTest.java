@@ -1,4 +1,3 @@
-
 package pt.up.fe.comp.cp1.core.semantics.declarations;
 
 import org.junit.Test;
@@ -21,5 +20,19 @@ public class ImportsSemanticAnalysisErrorTest extends pt.up.fe.comp.test.env.Jmm
         symbolTable("SuperWithClassNotImported.jmm", true);
         symbolTable("SuperWithClassNotImportedOk.jmm", false);
 
+    }
+
+    @Test
+    public void importedClassExists() {
+        setDescription("Test that an imported class exists");
+        semantics("ImportedClassExistsFail.jmm", true);
+        semantics("ImportedClassExistsOk.jmm", false);
+    }
+
+    @Test
+    public void declaredImportedClass() {
+        setDescription("Test if an imported class exists");
+        semantics("DeclaredImportedClassFail.jmm", true);
+        semantics("DeclaredImportedClassOk.jmm", false);
     }
 }
