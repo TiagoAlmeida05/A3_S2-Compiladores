@@ -1,0 +1,63 @@
+package ${PACKAGE}.ast;
+
+import pt.up.fe.comp.jmm.ast.JmmNode;
+import pt.up.fe.comp.jmm.ast.Kind;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+
+public enum ${NODE_KIND} implements Kind {
+    ${ENUM_VALUES};
+    final String key;
+    final ${NODE_KIND} extend;
+    ${NODE_KIND}(String key, ${NODE_KIND} extend){this.key = key; this.extend = extend;}
+    ${NODE_KIND}(String key){this(key,null);}
+
+    @Override
+    public String getKey() {return key;}
+
+    @Override
+    public Optional<Kind> extend() {return Optional.ofNullable(extend);}
+
+    public static Optional<JmmKind> fromString(String kind) {
+        for (JmmKind k : JmmKind.values()) {
+            if (k.key.equals(kind)) {
+                return Optional.of(k);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Performs a check on all kinds to test and returns false if none matches. Otherwise, returns true.
+     *
+     * @param node
+     * @param kindsToTest
+     * @return
+     */
+    public static boolean check(JmmNode node, Kind... kindsToTest) {
+
+        for (Kind k : kindsToTest) {
+
+            // if any matches, return successfully
+            if (k.check(node)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Performs a check an all kinds to test and throws if none matches. Otherwise, does nothing.
+     *
+     * @param node
+     * @param kindsToTest
+     */
+    public static void checkOrThrow(JmmNode node, Kind... kindsToTest) {
+        if (!check(node, kindsToTest)) {
+            // throw if none matches
+            throw new RuntimeException("Node '" + node + "' is not any of " + Arrays.asList(kindsToTest));
+        }
+    }
+}

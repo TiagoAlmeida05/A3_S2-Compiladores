@@ -1,0 +1,6 @@
+public enum ${NODE} implements NodeAttribute{
+    ${ATTRIBUTES};
+    final String key; ${NODE}(String key){this.key = key;}
+    @Override
+    public String getKey() { return key;}
+  }

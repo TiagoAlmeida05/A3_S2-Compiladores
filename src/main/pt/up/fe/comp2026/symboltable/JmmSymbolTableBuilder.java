@@ -110,7 +110,7 @@ public class JmmSymbolTableBuilder {
                         "Class '" + className + "' cannot extend itself"));
             }
 
-            boolean isImplicitlyImported = superName.equals("Object");
+            boolean isImplicitlyImported = importer.isImplicitImport(superName);
 
             boolean isImported = imports.stream()
                     .anyMatch(i -> i.equals(superName) || i.endsWith("." + superName));

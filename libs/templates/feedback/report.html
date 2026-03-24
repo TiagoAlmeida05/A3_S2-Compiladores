@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body {
+        font-family: system-ui, Arial, sans-serif;
+        margin: 1rem
+    }
+
+    pre {
+        background: #f6f8fa;
+        padding: 1rem;
+        border-radius: 6px;
+        overflow: auto
+    }</style>
+    <script src="https://cdn.jsdelivr.net/gh/google/code-prettify@master/loader/run_prettify.js?lang=css&amp;skin=sunburst"></script>
+    <style>
+        .linenums li {
+            list-style-type: decimal;
+        }
+    </style>
+    <title>${title}</title>
+</head>
+<body>
+<h1>${title}</h1>
+${description}
+<h2>Assertion Problem</h2>
+<p>${message}</p>
+<strong>Expected</strong>
+<p>${expected}</p>
+<strong>Given</strong>
+<p>${given}</p>
+${info}
+
+
+</body>
+</html>

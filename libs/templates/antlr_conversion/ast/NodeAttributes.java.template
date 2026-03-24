@@ -1,0 +1,5 @@
+package ${PACKAGE}.ast;
+import pt.up.fe.comp.jmm.ast.NodeAttribute;
+public class ${NODE_PREFIX}Attributes {
+  ${ATTRIBUTES_ENUMS}
+}

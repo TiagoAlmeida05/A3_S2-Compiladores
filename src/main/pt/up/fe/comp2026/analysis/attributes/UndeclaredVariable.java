@@ -32,6 +32,9 @@ public class UndeclaredVariable extends AnalysisVisitor {
         var name = varRefExpr.get("name");
         if (currentMethod.getParameter(name).isPresent()) return null;
         if (currentMethod.getLocalVariable(name).isPresent()) return null;
+        if (table.getField(name).isPresent()) return null;
+        if (table.getImports().stream()
+                .anyMatch(i -> i.equals(name) || i.endsWith("." + name))) return null;
 
         addReport(Report.newError(Stage.SEMANTIC,
                 NodeUtils.getLine(varRefExpr),

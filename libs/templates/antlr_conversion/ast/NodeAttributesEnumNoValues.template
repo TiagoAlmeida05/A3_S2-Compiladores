@@ -1,0 +1,4 @@
+public enum ${NODE} implements NodeAttribute{
+    /*NO ATTRIBUTES*/;
+    public String getKey() { return null;}
+}
