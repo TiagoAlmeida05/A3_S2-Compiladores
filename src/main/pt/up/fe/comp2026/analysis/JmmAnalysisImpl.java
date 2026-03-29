@@ -31,7 +31,8 @@ public class JmmAnalysisImpl implements JmmAnalysis {
             new UndeclaredVariable(),
             new TypeCheckVisitor(),
             new AssignmentCheckVisitor(),
-            new StatementCheckVisitor()
+            new StatementCheckVisitor(),
+            new CallCheckVisitor()
         );
     }
 

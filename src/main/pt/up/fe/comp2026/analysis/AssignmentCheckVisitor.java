@@ -63,6 +63,8 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
     }
 
     private boolean isAssignable(JmmType leftType, JmmType rightType, SymbolTable table) {
+        if (rightType instanceof JmmClassType rc && rc.name().equals("unknown")) return true;
+
         if (leftType.equals(rightType)) return true;
 
         // Primitivos diferentes são sempre incompatíveis
