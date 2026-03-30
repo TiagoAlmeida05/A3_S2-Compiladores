@@ -15,7 +15,6 @@ public class UndeclaredVariable extends AnalysisVisitor {
 
     @Override
     public void buildVisitor() {
-
         addVisit(JmmKind.METHOD_DECL, this::visitMethodDecl);
         addVisit(JmmKind.VAR_REF_EXPR, this::visitVarRefExpr);
     }
@@ -32,7 +31,16 @@ public class UndeclaredVariable extends AnalysisVisitor {
         var name = varRefExpr.get("name");
         if (currentMethod.getParameter(name).isPresent()) return null;
         if (currentMethod.getLocalVariable(name).isPresent()) return null;
-        if (table.getField(name).isPresent()) return null;
+        if (table.getField(name).isPresent()) {
+            if (currentMethod.isStatic()) {
+                addReport(Report.newError(Stage.SEMANTIC,
+                        NodeUtils.getLine(varRefExpr),
+                        NodeUtils.getColumn(varRefExpr),
+                        String.format("Cannot access instance field '%s' from a static method.", name),
+                        null));
+            }
+            return null;
+        }
         if (table.getImports().stream()
                 .anyMatch(i -> i.equals(name) || i.endsWith("." + name))) return null;
 

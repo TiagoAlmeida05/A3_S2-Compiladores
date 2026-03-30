@@ -132,10 +132,10 @@ stmt
     : '{' stmt* '}'                                  #BlockStmt
 
     // Control Flow
-    | IF '(' cond=expr ')' thenStmt=stmt (options {greedy=true;}: ELSE elseStmt=stmt)? #IfElseStmt
+    | IF '(' expr ')' stmt (options {greedy=true;}: ELSE stmt)? #IfElseStmt
 
-    | FOR '(' init=forInit ';' cond=expr ';' iter=forIter ')'
-     body=stmt                                              #ForStmt
+    | FOR '(' (forInit)? ';' (expr)? ';' (forIter)? ')'
+    stmt                                                    #ForStmt
 
     | WHILE '(' cond=expr ')' body=stmt                     #WhileStmt
 
@@ -191,7 +191,7 @@ expr
 
     // Array Initializer
     | NEW INT '[' ']' '{'
-    (elems+=expr (',' elems+=expr)*)? '}'                   #ArrayInitExpr
+    (expr (',' expr)*)? '}'                                 #ArrayInitExpr
 
     // Implicit this
     | method=ID '(' argList? ')'                            #ImplicitThisCallExpr

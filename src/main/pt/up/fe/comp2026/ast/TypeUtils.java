@@ -72,14 +72,16 @@ public class TypeUtils {
 
             case NEW_OBJECT_EXPR -> {
                 String className = expr.get("name");
-                var qualifiedName = table.getImportedFullyQualifiedName(className).orElse(className);
+                var qualifiedName = table.getImportedFullyQualifiedName(className)
+                        .orElse(className.equals(table.getClassName()) ? table.getFullyQualifiedName() : className);
                 yield JmmClassType.ofInstance(qualifiedName, false);
             }
 
             // NOVO
             case NEW_ARRAY_EXPR -> {
                 String className = expr.get("name");
-                var qualifiedName = table.getImportedFullyQualifiedName(className).orElse(className);
+                var qualifiedName = table.getImportedFullyQualifiedName(className)
+                        .orElse(className.equals(table.getClassName()) ? table.getFullyQualifiedName() : className);
                 yield new JmmArrayType(JmmClassType.ofInstance(qualifiedName, false), 1);
             }
 
