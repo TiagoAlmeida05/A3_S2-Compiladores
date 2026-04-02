@@ -3,24 +3,22 @@ package pt.up.fe.comp2026.analysis;
 import pt.up.fe.comp.jmm.analysis.table.MethodSymbol;
 import pt.up.fe.comp.jmm.analysis.table.Symbol;
 import pt.up.fe.comp.jmm.analysis.table.SymbolTable;
+import pt.up.fe.comp.jmm.analysis.table.reflection.Importer;
 import pt.up.fe.comp.jmm.analysis.table.type.JmmType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType;
 import pt.up.fe.comp.jmm.ast.JmmNode;
 import pt.up.fe.comp.jmm.report.Report;
 import pt.up.fe.comp.jmm.report.Stage;
-import pt.up.fe.comp.jmm.analysis.table.reflection.Importer;
 import pt.up.fe.comp2026.ast.NodeUtils;
 import pt.up.fe.comp2026.ast.TypeUtils;
 import pt.up.fe.comp2026.jmm.ast.JmmKind;
 import pt.up.fe.comp2026.symboltable.JmmSymbolTable;
 
-import javax.swing.text.html.Option;
-import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-import static pt.up.fe.comp2026.jmm.ast.JmmKind.*;
+import static pt.up.fe.comp2026.jmm.ast.JmmKind.ARG_LIST;
 
 public class CallCheckVisitor extends AnalysisVisitor {
 
@@ -63,20 +61,21 @@ public class CallCheckVisitor extends AnalysisVisitor {
 
         if (isThisClass) {
             var localMethods = table.getMethods(methodName);
-            if (!localMethods.isEmpty()) {
-                validateArguments(methodCall, localMethods.get(0).parameters(), typeUtils);
+            var matchedLocal = findMatchingOverload(methodCall, localMethods);
+            if (matchedLocal != null) {
+                validateArguments(methodCall, matchedLocal.parameters(), typeUtils);
                 return null;
             }
 
             String superName = table.getSuperFullyQualifiedName();
-            if(superName != null){
+            if (superName != null) {
                 var superST = resolveExternalSymbolTable(jmmTable, superName);
 
-                if(superST.isPresent()) {
+                if (superST.isPresent()) {
                     var superMethods = superST.get().getMethods(methodName);
-                    if(!superMethods.isEmpty()){
+                    if (!superMethods.isEmpty()) {
                         var matchedMethod = findMatchingOverload(methodCall, superMethods);
-                        if(matchedMethod != null) {
+                        if (matchedMethod != null) {
                             validateArguments(methodCall, matchedMethod.parameters(), typeUtils);
                             return null;
                         } else {
@@ -97,9 +96,9 @@ public class CallCheckVisitor extends AnalysisVisitor {
             String resolveName = table.getImportedFullyQualifiedName(typeName).orElse(typeName);
             var importedST = jmmTable.getImportedSymbolTable(resolveName);
 
-            if(importedST.isPresent()) {
+            if (importedST.isPresent()) {
                 var methods = importedST.get().getMethods(methodName);
-                if(methods.isEmpty()) {
+                if (methods.isEmpty()) {
                     addReport(Report.newError(Stage.SEMANTIC,
                             NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
                             "Method '" + methodName + "' not found in imported class '" + resolveName + "´", null));
@@ -142,7 +141,7 @@ public class CallCheckVisitor extends AnalysisVisitor {
         var argListNodes = methodCall.getChildren(ARG_LIST);
         var args = argListNodes.isEmpty() ? Collections.<JmmNode>emptyList() : argListNodes.get(0).getChildren();
 
-        if(args.size() != parameters.size()) {
+        if (args.size() != parameters.size()) {
             addReport(Report.newError(Stage.SEMANTIC,
                     NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
                     "Method expects " + parameters.size() + " arguments, but got" + args.size(), null));
@@ -159,37 +158,37 @@ public class CallCheckVisitor extends AnalysisVisitor {
 
             var paramType = parameters.get(i).type();
 
-            if(!argType.equals(paramType)) {
+            if (!argType.equals(paramType)) {
                 addReport(Report.newError(Stage.SEMANTIC,
                         NodeUtils.getLine(args.get(i)), NodeUtils.getColumn(args.get(i)),
                         "Type mismatch: arguments " + (i + 1) + " expects " + paramType.print() +
-                        " but got " + argType.print(), null));
+                                " but got " + argType.print(), null));
             }
         }
     }
 
-    private Optional<SymbolTable> resolveExternalSymbolTable (JmmSymbolTable jmmTable, String className) {
+    private Optional<SymbolTable> resolveExternalSymbolTable(JmmSymbolTable jmmTable, String className) {
         var importer = Importer.fromThisClassPath();
 
         var st = importer.getSymbolTableOf(className);
-        if(st.isPresent()) return st;
+        if (st.isPresent()) return st;
 
         st = importer.tryImplicitImport(className);
-        if(st.isPresent()) return st;
+        if (st.isPresent()) return st;
 
         var fqn = jmmTable.getImportedFullyQualifiedName(className);
-        if(fqn.isPresent()){
+        if (fqn.isPresent()) {
             return importer.getSymbolTableOf(fqn.get());
         }
         return Optional.empty();
     }
 
-    private MethodSymbol findMatchingOverload(JmmNode methodCall, List<MethodSymbol> methods){
+    private MethodSymbol findMatchingOverload(JmmNode methodCall, List<MethodSymbol> methods) {
         var argListNodes = methodCall.getChildren(ARG_LIST);
         var args = argListNodes.isEmpty() ? Collections.<JmmNode>emptyList() : argListNodes.get(0).getChildren();
 
         for (var method : methods) {
-            if (method.parameters().size() == args.size()){
+            if (method.parameters().size() == args.size()) {
                 return method;
             }
         }
