@@ -4,6 +4,7 @@ import pt.up.fe.comp.jmm.analysis.table.MethodSymbol;
 import pt.up.fe.comp.jmm.analysis.table.SymbolTable;
 import pt.up.fe.comp.jmm.analysis.table.type.JmmType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmArrayType;
+import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.ast.JmmNode;
 import pt.up.fe.comp.jmm.report.Report;
@@ -159,6 +160,7 @@ public class ArrayCheckVisitor extends AnalysisVisitor {
         }
 
         var elementType = arrayType.itemType();
+        if (valueType instanceof JmmClassType vc && vc.name().equals("unknown")) return null;
         if (!valueType.equals(elementType)) {
             addReport(Report.newError(Stage.SEMANTIC,
                     NodeUtils.getLine(value), NodeUtils.getColumn(value),
@@ -170,17 +172,10 @@ public class ArrayCheckVisitor extends AnalysisVisitor {
     }
 
     private Void visitNewArrayExpr(JmmNode node, SymbolTable table) {
-        System.out.println("NODE: " + node);
-        System.out.println("CHILDREN: " + node.getNumChildren());
-        System.out.println("SIZE attr: " + node.getObjectAsList("size", Object.class));
-        try {
-            System.out.println("extraBrackets: " + node.getObjectAsList("extraBrackets", String.class));
-        } catch (Exception e) {
-            System.out.println("no extraBrackets");
-        }
         if (currentMethod == null) return null;
         var typeUtils = TypeUtils.with(table);
 
+        int explicitDims = 0;
         for (var child : node.getChildren()) {
             JmmType sizeType;
             try {
@@ -188,12 +183,30 @@ public class ArrayCheckVisitor extends AnalysisVisitor {
             } catch (Exception e) {
                 continue;
             }
+
             if (!sizeType.equals(JmmPrimitiveType.INT)) {
                 addReport(Report.newError(Stage.SEMANTIC,
                         NodeUtils.getLine(child), NodeUtils.getColumn(child),
                         "Array size must be of type int, but got '" + sizeType.print() + "'", null));
+            } else {
+                explicitDims++;
             }
         }
+
+        int extraDims = 0;
+        try {
+            extraDims = node.getObjectAsList("extraBrackets", String.class).size();
+        } catch (Exception ignored) {
+        }
+
+        int totalDims = explicitDims + extraDims;
+
+        // Cria o tipo final usando o construtor correto
+        JmmType arrayType = new JmmArrayType(JmmPrimitiveType.INT, totalDims);
+
+        // Guarda o tipo no node
+        node.put("exprType", String.valueOf(arrayType));
+
         return null;
     }
 }

@@ -32,6 +32,39 @@ public class CallCheckVisitor extends AnalysisVisitor {
         addVisit(JmmKind.NEW_OBJECT_EXPR, this::visitNewObject);
     }
 
+    private MethodSymbol findMatchingOverload(JmmNode methodCall, List<MethodSymbol> methods, TypeUtils typeUtils) {
+        var argListNodes = methodCall.getChildren(ARG_LIST);
+        var args = argListNodes.isEmpty() ? Collections.<JmmNode>emptyList() : argListNodes.get(0).getChildren();
+
+        // 1ª passagem: match exacto por número de args E tipos
+        for (var method : methods) {
+            if (method.parameters().size() != args.size()) continue;
+
+            boolean allMatch = true;
+            for (int i = 0; i < args.size(); i++) {
+                try {
+                    JmmType argType = typeUtils.getExprType(args.get(i));
+                    if (!argType.equals(method.parameters().get(i).type())) {
+                        allMatch = false;
+                        break;
+                    }
+                } catch (Exception e) {
+                    allMatch = false;
+                    break;
+                }
+            }
+            if (allMatch) return method;
+        }
+
+        // 2ª passagem (fallback): só por número de args — para casos onde os tipos não são resolúveis ainda
+        for (var method : methods) {
+            if (method.parameters().size() == args.size()) {
+                return method;
+            }
+        }
+        return null;
+    }
+
     private Void visitMethodDecl(JmmNode method, SymbolTable table) {
         var signature = TypeUtils.with(table).getMethodDeclSignature(method);
         currentMethod = table.getMethod(signature).orElse(null);
@@ -62,7 +95,7 @@ public class CallCheckVisitor extends AnalysisVisitor {
 
         if (isThisClass) {
             var localMethods = table.getMethods(methodName);
-            var matchedLocal = findMatchingOverload(methodCall, localMethods);
+            var matchedLocal = findMatchingOverload(methodCall, localMethods, typeUtils);
             if (matchedLocal != null) {
                 validateArguments(methodCall, matchedLocal.parameters(), typeUtils);
                 return null;
@@ -75,7 +108,7 @@ public class CallCheckVisitor extends AnalysisVisitor {
                 if (superST.isPresent()) {
                     var superMethods = superST.get().getMethods(methodName);
                     if (!superMethods.isEmpty()) {
-                        var matchedMethod = findMatchingOverload(methodCall, superMethods);
+                        var matchedMethod = findMatchingOverload(methodCall, superMethods, typeUtils);
                         if (matchedMethod != null) {
                             validateArguments(methodCall, matchedMethod.parameters(), typeUtils);
                             return null;
@@ -106,7 +139,7 @@ public class CallCheckVisitor extends AnalysisVisitor {
                     return null;
                 }
 
-                var matchedMethod = findMatchingOverload(methodCall, methods);
+                var matchedMethod = findMatchingOverload(methodCall, methods, typeUtils);
 
                 if (matchedMethod == null) {
                     addReport(Report.newError(Stage.SEMANTIC,
@@ -182,7 +215,7 @@ public class CallCheckVisitor extends AnalysisVisitor {
 
         // Procura overload local
         var localMethods = table.getMethods(methodName);
-        var matchedLocal = findMatchingOverload(methodCall, localMethods);
+        var matchedLocal = findMatchingOverload(methodCall, localMethods, typeUtils);
         if (matchedLocal != null) {
             validateArguments(methodCall, matchedLocal.parameters(), typeUtils);
             return null;
@@ -194,7 +227,7 @@ public class CallCheckVisitor extends AnalysisVisitor {
             var superST = resolveExternalSymbolTable(jmmTable, superName);
             if (superST.isPresent()) {
                 var superMethods = superST.get().getMethods(methodName);
-                var matchedSuper = findMatchingOverload(methodCall, superMethods);
+                var matchedSuper = findMatchingOverload(methodCall, superMethods, typeUtils);
                 if (matchedSuper != null) {
                     validateArguments(methodCall, matchedSuper.parameters(), typeUtils);
                     return null;
@@ -260,17 +293,5 @@ public class CallCheckVisitor extends AnalysisVisitor {
             return importer.getSymbolTableOf(fqn.get());
         }
         return Optional.empty();
-    }
-
-    private MethodSymbol findMatchingOverload(JmmNode methodCall, List<MethodSymbol> methods) {
-        var argListNodes = methodCall.getChildren(ARG_LIST);
-        var args = argListNodes.isEmpty() ? Collections.<JmmNode>emptyList() : argListNodes.get(0).getChildren();
-
-        for (var method : methods) {
-            if (method.parameters().size() == args.size()) {
-                return method;
-            }
-        }
-        return null;
     }
 }

@@ -74,6 +74,10 @@ public class JmmSymbolTableBuilder {
             if (!imports.contains(importPath)) {
                 imports.add(importPath);
             }
+            if (importer.tryClassOf(importPath).isEmpty()) {
+                reports.add(newError(imp,
+                        "Imported class does not exist: " + importPath));
+            }
         }
 
         var classDecl = root.getObject("classNode", JmmNode.class);
