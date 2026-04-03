@@ -71,18 +71,39 @@ public class TypeUtils {
             }
             case ARRAY_INIT_EXPR -> new JmmArrayType(JmmPrimitiveType.INT, 1);
             case NEW_INT_ARRAY_EXPR -> {
-                var sizes = expr.getObjectAsList("size", Object.class);
-                var extraBrackets = expr.getObjectAsList("extraBrackets", String.class);
-                int totalDims = sizes.size() + extraBrackets.size();
-                yield new JmmArrayType(JmmPrimitiveType.INT, totalDims);
+                System.out.println("NEW_INT_ARRAY children=" + expr.getNumChildren()
+                        + " attrs=" + expr.getAttributes()
+                        + " attrValues=" + expr.getAttributes().stream()
+                        .map(a -> a + "=" + expr.get(a)).toList());
+                int explicitDims = expr.getNumChildren(); // dimensões com tamanho
+                int extraDims = 0;
+                try {
+                    extraDims = expr.getObjectAsList("extraBrackets", String.class).size();
+                } catch (Exception ignored) {
+                }
+                int totalDims = explicitDims + extraDims;
+                JmmType result = JmmPrimitiveType.INT;
+                for (int i = 0; i < totalDims; i++) {
+                    result = new JmmArrayType(result, 1);
+                }
+                yield result;
             }
             case NEW_ARRAY_EXPR -> {
                 String className = expr.get("name");
                 var qualifiedName = table.getImportedFullyQualifiedName(className)
                         .orElse(className.equals(table.getClassName()) ? table.getFullyQualifiedName() : className);
-                var extraBrackets = expr.getObjectAsList("extraBrackets", String.class);
-                int totalDims = 1 + extraBrackets.size();
-                yield new JmmArrayType(JmmClassType.ofInstance(qualifiedName, false), totalDims);
+                int explicitDims = expr.getNumChildren();
+                int extraDims = 0;
+                try {
+                    extraDims = expr.getObjectAsList("extraBrackets", String.class).size();
+                } catch (Exception ignored) {
+                }
+                int totalDims = explicitDims + extraDims;
+                JmmType result = JmmClassType.ofInstance(qualifiedName, false);
+                for (int i = 0; i < totalDims; i++) {
+                    result = new JmmArrayType(result, 1);
+                }
+                yield result;
             }
             case ARRAY_LENGTH_EXPR -> intType();
             case ARRAY_ACCESS_EXPR -> {
@@ -119,7 +140,6 @@ public class TypeUtils {
         return new Signature(methodName, params);
     }
 
-    // FIX: cobre todos os operadores
     private JmmType getBinExprType(JmmNode binaryExpr) {
         String operator = binaryExpr.get("op");
         return switch (operator) {
@@ -149,7 +169,6 @@ public class TypeUtils {
         var field = table.getField(name);
         if (field.isPresent()) return field.get().type();
 
-        // Pode ser uma classe importada usada como receptor estático
         var importedName = table.getImportedFullyQualifiedName(name);
         if (importedName.isPresent()) {
             return JmmClassType.ofInstance(importedName.get(), true);
@@ -172,13 +191,11 @@ public class TypeUtils {
         if (targetType instanceof JmmClassType classType) {
             var typeName = classType.name();
 
-            // Tenta na symbol table local (classe atual ou superclasse)
             var localMethods = table.getMethods(methodName);
             if (!localMethods.isEmpty()) {
                 return localMethods.getFirst().returnType();
             }
 
-            // Tenta numa classe importada
             var importedST = table.getImportedSymbolTable(typeName);
             if (importedST.isPresent()) {
                 var methods = importedST.get().getMethods(methodName);

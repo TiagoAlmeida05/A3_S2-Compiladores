@@ -41,6 +41,7 @@ public class UndeclaredVariable extends AnalysisVisitor {
             }
             return null;
         }
+        if (name.equals(table.getClassName()) || name.equals(table.getFullyQualifiedName())) return null;
         if (table.getImports().stream()
                 .anyMatch(i -> i.equals(name) || i.endsWith("." + name))) return null;
 

@@ -29,6 +29,11 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
     }
 
     private Void visitAssignStmt(JmmNode assignStmt, SymbolTable table) {
+        var methodNode = assignStmt.getAncestor(JmmKind.METHOD_DECL).orElse(null);
+        if (methodNode == null) return null;
+
+        var signature = TypeUtils.with(table).getMethodDeclSignature(methodNode);
+        currentMethod = table.getMethod(signature).orElse(null);
         if (currentMethod == null) return null;
 
         var varName = assignStmt.get("var");
@@ -36,13 +41,14 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
 
         JmmType leftType = getVarType(varName, table);
         if (leftType == null) return null;
-
+        System.out.println("ASSIGN var=" + assignStmt.get("var") + " attrs=" + assignStmt.getAttributes());
         JmmType rightType;
         try {
             rightType = TypeUtils.with(table).getExprType(valueExpr);
         } catch (Exception e) {
             return null;
         }
+        System.out.println("leftType=" + leftType + " rightType=" + rightType + " rightClass=" + rightType.getClass().getSimpleName());
 
         if (!isAssignable(leftType, rightType, table)) {
             addReport(Report.newError(Stage.SEMANTIC,
@@ -63,12 +69,33 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         return table.getField(name).map(s -> s.type()).orElse(null);
     }
 
+    private int countDimensions(JmmType type) {
+        if (type instanceof JmmArrayType arr) {
+            return 1 + countDimensions(arr.itemType());
+        }
+        return 0;
+    }
+
+    private JmmType getBaseType(JmmType type) {
+        if (type instanceof JmmArrayType arr) {
+            return getBaseType(arr.itemType());
+        }
+        return type;
+    }
+
     private boolean isAssignable(JmmType leftType, JmmType rightType, SymbolTable table) {
         if (rightType instanceof JmmClassType rc && rc.name().equals("unknown")) return true;
 
         if (leftType instanceof JmmArrayType leftArr && rightType instanceof JmmArrayType rightArr) {
-            if (leftArr.dimension() != rightArr.dimension()) return false;
-            return isAssignable(leftArr.itemType(), rightArr.itemType(), table);
+            if (countDimensions(rightArr) <= countDimensions(leftArr) &&
+                    isAssignable(getBaseType(leftArr), getBaseType(rightArr), table)) {
+                return true;
+            }
+            if (countDimensions(leftArr) == countDimensions(rightArr) &&
+                    isAssignable(getBaseType(leftArr), getBaseType(rightArr), table)) {
+                return true;
+            }
+            return false;
         }
 
         if (leftType instanceof JmmArrayType || rightType instanceof JmmArrayType) return false;
