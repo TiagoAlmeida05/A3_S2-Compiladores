@@ -71,9 +71,6 @@ public class JmmSymbolTableBuilder {
             var qN = imp.getChild(0); // qualifiedName
             var importPathList = qN.getObjectAsList("parts", String.class);
             var importPath = String.join(".", importPathList);
-            if (!importer.inClassPath(importPath)) {
-                reports.add(newError(imp, "Imported class '" + importPath + "' does not exist"));
-            }
             if (!imports.contains(importPath)) {
                 imports.add(importPath);
             }
@@ -120,7 +117,6 @@ public class JmmSymbolTableBuilder {
                         "Superclass '" + superName + "' is not imported"));
             }
 
-            // resolve o nome qualificado (mantém o que já tinhas)
             superQualifiedName = resolveClassName(superName);
         }
 
@@ -165,7 +161,7 @@ public class JmmSymbolTableBuilder {
             return JmmPrimitiveType.INT;
         }
 
-        if (VOID_TYPE.check(typeNode)) {       // <-- faltava este caso
+        if (VOID_TYPE.check(typeNode)) {
             return JmmPrimitiveType.VOID;
         }
 
@@ -175,7 +171,7 @@ public class JmmSymbolTableBuilder {
 
         if (CLASS_TYPE.check(typeNode)) {
             var simpleName = typeNode.get("name");
-            // Resolve o nome qualificado: verifica imports ou a própria classe
+            // verifica imports ou a própria classe
             var qualifiedName = resolveClassName(simpleName);
             boolean isImported = imports.stream()
                     .anyMatch(i -> i.equals(simpleName) || i.endsWith("." + simpleName));
@@ -186,7 +182,7 @@ public class JmmSymbolTableBuilder {
 
         if (ARRAY_TYPE.check(typeNode)) {
             var base = buildType(typeNode.getChild(0));
-            int dimension = typeNode.getInteger("dimension", 1); // se tiveres essa info, senão usa 1
+            int dimension = typeNode.getInteger("dimension", 1);
             return JmmArrayType.of(base, dimension);
         }
 
@@ -194,9 +190,9 @@ public class JmmSymbolTableBuilder {
     }
 
     private String resolveClassName(String simpleName) {
-        // Verifica se é a própria classe
+        // Verificar se é a própria classe
         if (simpleName.equals(className)) {
-            return declaredClasses.get(className); // nome qualificado
+            return declaredClasses.get(className);
         }
         // Verifica se está nos imports
         var imported = imports.stream()
@@ -205,13 +201,12 @@ public class JmmSymbolTableBuilder {
         if (imported.isPresent()) {
             return imported.get();
         }
-        // Se não encontrar, usa o nome simples (para tipos externos ainda não importados)
+
         return simpleName;
     }
 
     private List<Symbol> buildLocals(JmmNode method, List<Symbol> params) {
         List<Symbol> locals = new ArrayList<>();
-        // Cria um HashSet para nomes existentes (parâmetros + locais anteriores)
         Set<String> names = new HashSet<>();
         // Adiciona parâmetros
         for (var p : params) {
@@ -247,13 +242,11 @@ public class JmmSymbolTableBuilder {
     private MethodSymbol buildMethod(JmmNode method) {
         String methodName = method.get("name");
 
-        // Retorna o tipo do método
         var returnTypeNode = method.getChildren(METHOD_TYPE).stream()
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("No return type in method: " + methodName));
         JmmType returnType = buildType(returnTypeNode);
 
-        // Constrói parâmetros
         var paramListNodes = method.getChildren(PARAM_LIST);
         var paramNodes = paramListNodes.isEmpty()
                 ? method.getChildren(PARAM)
@@ -273,10 +266,8 @@ public class JmmSymbolTableBuilder {
             }
         }
 
-        // Constrói variáveis locais e checa conflito com parâmetros
         List<Symbol> locals = buildLocals(method, params);
 
-        // Visibilidade e static
         var visibilityNodes = method.getChildren(VISIBILITY);
         Visibility visibility = Visibility.PACKAGE_PROTECTED;
         if (!visibilityNodes.isEmpty()) {
@@ -285,6 +276,4 @@ public class JmmSymbolTableBuilder {
         boolean isStatic = method.getBoolean(JmmAttributes.METHOD_DECL.IS_STATIC, false);
         return new MethodSymbol(methodName, returnType, params, locals, isStatic, visibility);
     }
-
-
 }

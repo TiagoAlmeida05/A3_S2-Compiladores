@@ -51,6 +51,4 @@ public class UndeclaredVariable extends AnalysisVisitor {
                 null));
         return null;
     }
-
-
 }

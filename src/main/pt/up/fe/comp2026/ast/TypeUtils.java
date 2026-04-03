@@ -55,55 +55,49 @@ public class TypeUtils {
             case INTEGER_LITERAL -> intType();
             case BOOLEAN_LITERAL -> JmmPrimitiveType.BOOLEAN;
             case THIS_EXPR -> JmmClassType.ofInstance(table.getFullyQualifiedName(), false);
-
             case BINARY_EXPR -> getBinExprType(expr);
-
-            // FIX: ! deve devolver boolean, não o tipo do filho
             case UNARY_OP -> {
                 String op = expr.get("op");
                 yield op.equals("!") ? JmmPrimitiveType.BOOLEAN : intType();
             }
-            // ++ e -- operam sobre ints
             case PREFIX_OP -> intType();
-
             case PRIORITY_EXPR -> getExprType(expr.getChild(0));
-
             case VAR_REF_EXPR -> getVarExprType(expr);
-
             case NEW_OBJECT_EXPR -> {
                 String className = expr.get("name");
                 var qualifiedName = table.getImportedFullyQualifiedName(className)
                         .orElse(className.equals(table.getClassName()) ? table.getFullyQualifiedName() : className);
                 yield JmmClassType.ofInstance(qualifiedName, false);
             }
-
-            // NOVO
+            case ARRAY_INIT_EXPR -> new JmmArrayType(JmmPrimitiveType.INT, 1);
+            case NEW_INT_ARRAY_EXPR -> {
+                var sizes = expr.getObjectAsList("size", Object.class);
+                var extraBrackets = expr.getObjectAsList("extraBrackets", String.class);
+                int totalDims = sizes.size() + extraBrackets.size();
+                yield new JmmArrayType(JmmPrimitiveType.INT, totalDims);
+            }
             case NEW_ARRAY_EXPR -> {
                 String className = expr.get("name");
                 var qualifiedName = table.getImportedFullyQualifiedName(className)
                         .orElse(className.equals(table.getClassName()) ? table.getFullyQualifiedName() : className);
-                yield new JmmArrayType(JmmClassType.ofInstance(qualifiedName, false), 1);
+                var extraBrackets = expr.getObjectAsList("extraBrackets", String.class);
+                int totalDims = 1 + extraBrackets.size();
+                yield new JmmArrayType(JmmClassType.ofInstance(qualifiedName, false), totalDims);
             }
-
-            case NEW_INT_ARRAY_EXPR -> new JmmArrayType(JmmPrimitiveType.INT, 1);
-
             case ARRAY_LENGTH_EXPR -> intType();
-
-            // NOVO: array[index] → tipo do elemento
             case ARRAY_ACCESS_EXPR -> {
                 var arrayType = getExprType(expr.getChild(0));
                 if (arrayType instanceof JmmArrayType arr) {
+                    if (arr.dimension() > 1) {
+                        yield new JmmArrayType(arr.itemType(), arr.dimension() - 1);
+                    }
                     yield arr.itemType();
                 }
                 yield intType();
             }
-
             case METHOD_CALL_EXPR -> getMethodCallType(expr);
-
             case IMPLICIT_THIS_CALL_EXPR -> getImplicitThisCallType(expr);
-
             case VAR_ACCESS -> getVarAccessType(expr);
-
             default -> throw new UnsupportedOperationException(
                     "Can't compute type for expression kind '" + expr.getKind() + "'");
         };

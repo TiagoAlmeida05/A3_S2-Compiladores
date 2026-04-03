@@ -3,6 +3,7 @@ package pt.up.fe.comp2026.analysis;
 import pt.up.fe.comp.jmm.analysis.table.MethodSymbol;
 import pt.up.fe.comp.jmm.analysis.table.SymbolTable;
 import pt.up.fe.comp.jmm.analysis.table.type.JmmType;
+import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmArrayType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType;
 import pt.up.fe.comp.jmm.ast.JmmNode;
 import pt.up.fe.comp.jmm.report.Report;
@@ -65,9 +66,15 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
     private boolean isAssignable(JmmType leftType, JmmType rightType, SymbolTable table) {
         if (rightType instanceof JmmClassType rc && rc.name().equals("unknown")) return true;
 
+        if (leftType instanceof JmmArrayType leftArr && rightType instanceof JmmArrayType rightArr) {
+            if (leftArr.dimension() != rightArr.dimension()) return false;
+            return isAssignable(leftArr.itemType(), rightArr.itemType(), table);
+        }
+
+        if (leftType instanceof JmmArrayType || rightType instanceof JmmArrayType) return false;
+
         if (leftType.equals(rightType)) return true;
 
-        // Primitivos diferentes são sempre incompatíveis
         if (leftType.isPrimitive() || rightType.isPrimitive()) return false;
 
         if (!(leftType instanceof JmmClassType leftClass) || !(rightType instanceof JmmClassType rightClass))
@@ -94,17 +101,16 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
             return false;
         }
 
-        // Para classes externas (ex: java.lang), usa reflexão Java
         try {
             var leftCls = Class.forName(toFQN(leftName));
             var rightCls = Class.forName(toFQN(rightName));
             return leftCls.isAssignableFrom(rightCls);
         } catch (Exception e) {
-            return true; // se não consegue verificar, é permissivo
+            return true;
         }
     }
 
-    // Resolve nomes simples de java.lang (ex: "NullPointerException" → "java.lang.NullPointerException")
+    // Resolve nomes simples de java.lang ("Name" para "java.lang.Name")
     private String toFQN(String name) {
         if (name.contains(".")) return name;
         try {

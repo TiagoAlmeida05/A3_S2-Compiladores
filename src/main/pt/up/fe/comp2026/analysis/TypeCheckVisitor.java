@@ -19,6 +19,7 @@ public class TypeCheckVisitor extends AnalysisVisitor {
         addVisit(JmmKind.METHOD_DECL, this::visitMethodDecl);
         addVisit(JmmKind.BINARY_EXPR, this::visitBinaryExpr);
         addVisit(JmmKind.UNARY_OP, this::visitUnaryOp);
+        addVisit(JmmKind.PREFIX_OP, this::visitPrefixOp);
     }
 
     private Void visitMethodDecl(JmmNode method, SymbolTable table) {
@@ -80,9 +81,27 @@ public class TypeCheckVisitor extends AnalysisVisitor {
                                 "Operator '" + op + "' expects boolean, but got " + rightType.print(), null));
                     }
                 }
+                case "==", "!=" -> {
+                    if (!leftType.equals(JmmPrimitiveType.INT) && !leftType.equals(JmmPrimitiveType.BOOLEAN)) {
+                        addReport(Report.newError(Stage.SEMANTIC,
+                                NodeUtils.getLine(left), NodeUtils.getColumn(left),
+                                "Operator '" + op + "' expects int or boolean, but got " + leftType.print(), null));
+                    }
+                    if (!rightType.equals(JmmPrimitiveType.INT) && !rightType.equals(JmmPrimitiveType.BOOLEAN)) {
+                        addReport(Report.newError(Stage.SEMANTIC,
+                                NodeUtils.getLine(right), NodeUtils.getColumn(right),
+                                "Operator '" + op + "' expects int or boolean, but got " + rightType.print(), null));
+                    }
+                    if (leftType.equals(JmmPrimitiveType.INT) && rightType.equals(JmmPrimitiveType.BOOLEAN) ||
+                            leftType.equals(JmmPrimitiveType.BOOLEAN) && rightType.equals(JmmPrimitiveType.INT)) {
+                        addReport(Report.newError(Stage.SEMANTIC,
+                                NodeUtils.getLine(binaryExpr), NodeUtils.getColumn(binaryExpr),
+                                "Operator '" + op + "' requires both operands to have the same type", null));
+                    }
+                }
             }
         } catch (Exception e) {
-            // Se não conseguimos determinar o tipo, ignoramos (será apanhado por outro visitor)
+            // Se não conseguimos determinar o tipo, ignoramos (vai ser apanhado por outro visitor)
         }
 
         return null;
@@ -110,7 +129,27 @@ public class TypeCheckVisitor extends AnalysisVisitor {
                         "Operator '" + op + "' expects int, but got " + operandType.print(), null));
             }
         } catch (Exception e) {
-            // ignorar se tipo não resolvível
+            // ignorar se tipo não for resolvível
+        }
+
+        return null;
+    }
+
+    private Void visitPrefixOp(JmmNode prefixOp, SymbolTable table) {
+        if (currentMethod == null) return null;
+
+        var operand = prefixOp.getChild(0);
+        var typeUtils = TypeUtils.with(table);
+
+        try {
+            var operandType = typeUtils.getExprType(operand);
+            if (!operandType.equals(JmmPrimitiveType.INT)) {
+                addReport(Report.newError(Stage.SEMANTIC,
+                        NodeUtils.getLine(operand), NodeUtils.getColumn(operand),
+                        "Operator '++/--' expects int, but got " + operandType.print(), null));
+            }
+        } catch (Exception e) {
+            // ignorar se tipo não for resolvível
         }
 
         return null;

@@ -186,8 +186,8 @@ expr
     | NEW name=ID '(' argList? ')'                           #NewObjectExpr
 
     // New Array
-    | NEW INT '[' size=expr ']'                             #NewIntArrayExpr
-    | NEW name=ID '[' size=expr ']'                         #NewArrayExpr
+    | NEW INT ('[' size+=expr ']')+ ('[' ']')* #NewIntArrayExpr
+    | NEW name=ID ('[' size+=expr ']')+ ('[' ']')* #NewArrayExpr
 
     // Array Initializer
     | NEW INT '[' ']' '{'

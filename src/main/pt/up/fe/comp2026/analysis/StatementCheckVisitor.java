@@ -10,7 +10,8 @@ import pt.up.fe.comp.jmm.report.Stage;
 import pt.up.fe.comp2026.ast.NodeUtils;
 import pt.up.fe.comp2026.ast.TypeUtils;
 import pt.up.fe.comp2026.jmm.ast.JmmKind;
-import static pt.up.fe.comp2026.jmm.ast.JmmKind.*;
+
+import static pt.up.fe.comp2026.jmm.ast.JmmKind.RETURN_STMT;
 
 
 public class StatementCheckVisitor extends AnalysisVisitor {
@@ -23,6 +24,8 @@ public class StatementCheckVisitor extends AnalysisVisitor {
         addVisit(JmmKind.IF_ELSE_STMT, this::visitIfElse);
         addVisit(JmmKind.WHILE_STMT, this::visitWhile);
         addVisit(JmmKind.RETURN_STMT, this::visitReturn);
+        addVisit(JmmKind.DO_WHILE_STMT, this::visitDoWhile);
+        addVisit(JmmKind.FOR_STMT, this::visitFor);
     }
 
     private Void visitMethodDecl(JmmNode method, SymbolTable table) {
@@ -106,7 +109,6 @@ public class StatementCheckVisitor extends AnalysisVisitor {
         if (expected.equals(actual)) return true;
         if (expected.isPrimitive() || actual.isPrimitive()) return false;
 
-        // Verifica herança via reflexão (mesmo padrão do AssignmentCheckVisitor)
         try {
             var expectedCls = Class.forName(toFQN(expected.print()));
             var actualCls = Class.forName(toFQN(actual.print()));
@@ -124,5 +126,57 @@ public class StatementCheckVisitor extends AnalysisVisitor {
         } catch (ClassNotFoundException e) {
             return name;
         }
+    }
+
+    private Void visitDoWhile(JmmNode doWhileStmt, SymbolTable table) {
+        if (currentMethod == null) return null;
+        var cond = doWhileStmt.getChild(1);
+        checkBoolean(cond, table, "Do-while condition");
+        return null;
+    }
+
+    private Void visitFor(JmmNode forStmt, SymbolTable table) {
+        if (currentMethod == null) return null;
+        
+        for (var child : forStmt.getChildren()) {
+            if (JmmKind.FOR_VAR_INIT.check(child) || JmmKind.FOR_ASSIGN_INIT.check(child)) continue;
+            if (JmmKind.FOR_COMPOUND_ITER.check(child) || JmmKind.FOR_ASSIGN_ITER.check(child) || JmmKind.FOR_EXPR_ITER.check(child))
+                continue;
+            if (JmmKind.BLOCK_STMT.check(child) || JmmKind.IF_ELSE_STMT.check(child) || JmmKind.WHILE_STMT.check(child)
+                    || JmmKind.DO_WHILE_STMT.check(child) || JmmKind.FOR_STMT.check(child)
+                    || JmmKind.ASSIGN_STMT.check(child) || JmmKind.EXPR_STMT.check(child)
+                    || JmmKind.RETURN_STMT.check(child) || JmmKind.RETURN_VOID_STMT.check(child)) continue;
+            checkBoolean(child, table, "For condition");
+            break;
+        }
+
+        // Verificar tipo do init
+        for (var child : forStmt.getChildren()) {
+            if (!JmmKind.FOR_VAR_INIT.check(child) && !JmmKind.FOR_ASSIGN_INIT.check(child)) continue;
+            var varName = child.get("name");
+            var valueNode = child.getChild(0);
+            var leftType = getLocalType(varName);
+            if (leftType == null) continue;
+            try {
+                var rightType = TypeUtils.with(table).getExprType(valueNode);
+                if (!leftType.print().equals(rightType.print())) {
+                    addReport(Report.newError(Stage.SEMANTIC,
+                            NodeUtils.getLine(child), NodeUtils.getColumn(child),
+                            "Incompatible types in for init: cannot assign " + rightType.print() + " to " + leftType.print(), null));
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        return null;
+    }
+
+    private JmmType getLocalType(String name) {
+        if (currentMethod == null) return null;
+        var param = currentMethod.getParameter(name);
+        if (param.isPresent()) return param.get().type();
+        var local = currentMethod.getLocalVariable(name);
+        if (local.isPresent()) return local.get().type();
+        return null;
     }
 }

@@ -29,19 +29,20 @@ public class JmmAnalysisImpl implements JmmAnalysis {
      */
     private List<AnalysisPass> buildPasses(SymbolTable table) {
         return List.of(
-            new VarInitCheckVisitor(),
-            new UndeclaredVariable(),
-            new TypeCheckVisitor(),
-            new AssignmentCheckVisitor(),
-            new StatementCheckVisitor(),
-            new CallCheckVisitor()
+                new VarInitCheckVisitor(),
+                new UndeclaredVariable(),
+                new TypeCheckVisitor(),
+                new AssignmentCheckVisitor(),
+                new StatementCheckVisitor(),
+                new CallCheckVisitor(),
+                new ArrayCheckVisitor()
         );
     }
 
     @Override
     public JmmSemanticsResult buildSymbolTable(JmmParserResult parserResult) {
         JmmNode rootNode = parserResult.rootNode();
-        var symbolTableBuilderResults = JmmSymbolTableBuilder.build(rootNode);  //vai retornar uma tabela de simbolos
+        var symbolTableBuilderResults = JmmSymbolTableBuilder.build(rootNode);
 
         SymbolTable table = symbolTableBuilderResults.table();
         List<Report> reports = symbolTableBuilderResults.reports();

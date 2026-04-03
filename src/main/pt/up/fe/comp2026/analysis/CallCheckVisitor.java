@@ -28,6 +28,7 @@ public class CallCheckVisitor extends AnalysisVisitor {
     public void buildVisitor() {
         addVisit(JmmKind.METHOD_DECL, this::visitMethodDecl);
         addVisit(JmmKind.METHOD_CALL_EXPR, this::visitMethodCall);
+        addVisit(JmmKind.IMPLICIT_THIS_CALL_EXPR, this::visitImplicitThisCall);
         addVisit(JmmKind.NEW_OBJECT_EXPR, this::visitNewObject);
     }
 
@@ -123,6 +124,7 @@ public class CallCheckVisitor extends AnalysisVisitor {
     private Void visitNewObject(JmmNode newObject, SymbolTable table) {
         var className = newObject.get("name");
         var jmmTable = (JmmSymbolTable) table;
+        var typeUtils = TypeUtils.with(table);
 
         if (className.equals(table.getClassName()) || jmmTable.isImplicitImport(className)) return null;
 
@@ -133,7 +135,84 @@ public class CallCheckVisitor extends AnalysisVisitor {
             addReport(Report.newError(Stage.SEMANTIC,
                     NodeUtils.getLine(newObject), NodeUtils.getColumn(newObject),
                     "Class '" + className + "' is not imported", null));
+            return null;
         }
+
+        String resolveName = table.getImportedFullyQualifiedName(className).orElse(className);
+
+        var importer = pt.up.fe.comp.jmm.analysis.table.reflection.Importer.fromThisClassPath();
+        var importedST = importer.getSymbolTableOf(resolveName);
+        if (importedST.isEmpty()) {
+            importedST = importer.tryImplicitImport(resolveName);
+        }
+
+        if (importedST.isEmpty()) return null;
+
+        var constructors = importedST.get().getMethods(className);
+
+        if (constructors.isEmpty()) return null;
+
+        var argListNodes = newObject.getChildren(ARG_LIST);
+        var args = argListNodes.isEmpty() ? Collections.<JmmNode>emptyList() : argListNodes.get(0).getChildren();
+
+        MethodSymbol matched = null;
+        for (var constructor : constructors) {
+            if (constructor.parameters().size() == args.size()) {
+                matched = constructor;
+                break;
+            }
+        }
+
+        if (matched == null) {
+            addReport(Report.newError(Stage.SEMANTIC,
+                    NodeUtils.getLine(newObject), NodeUtils.getColumn(newObject),
+                    "Constructor of '" + className + "' expects different number of arguments", null));
+            return null;
+        }
+        validateArguments(newObject, matched.parameters(), typeUtils);
+        return null;
+    }
+
+    private Void visitImplicitThisCall(JmmNode methodCall, SymbolTable table) {
+        if (currentMethod == null) return null;
+
+        var methodName = methodCall.get("method");
+        var jmmTable = (JmmSymbolTable) table;
+        var typeUtils = TypeUtils.with(table);
+
+        // Procura overload local
+        var localMethods = table.getMethods(methodName);
+        var matchedLocal = findMatchingOverload(methodCall, localMethods);
+        if (matchedLocal != null) {
+            validateArguments(methodCall, matchedLocal.parameters(), typeUtils);
+            return null;
+        }
+
+        // Procura na superclasse
+        String superName = table.getSuperFullyQualifiedName();
+        if (superName != null) {
+            var superST = resolveExternalSymbolTable(jmmTable, superName);
+            if (superST.isPresent()) {
+                var superMethods = superST.get().getMethods(methodName);
+                var matchedSuper = findMatchingOverload(methodCall, superMethods);
+                if (matchedSuper != null) {
+                    validateArguments(methodCall, matchedSuper.parameters(), typeUtils);
+                    return null;
+                }
+            }
+        }
+
+        // Método não existe
+        if (localMethods.isEmpty()) {
+            addReport(Report.newError(Stage.SEMANTIC,
+                    NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
+                    "Method '" + methodName + "' does not exist in the current class or its superclass", null));
+        } else {
+            addReport(Report.newError(Stage.SEMANTIC,
+                    NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
+                    "No overload of method '" + methodName + "' matches the provided arguments", null));
+        }
+
         return null;
     }
 
