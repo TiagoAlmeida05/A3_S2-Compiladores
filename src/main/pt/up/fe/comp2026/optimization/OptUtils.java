@@ -1,13 +1,9 @@
 package pt.up.fe.comp2026.optimization;
 
-import org.specs.comp.ollir.Element;
-import org.specs.comp.ollir.LiteralElement;
-import org.specs.comp.ollir.type.BuiltinKind;
-import org.specs.comp.ollir.type.BuiltinType;
-import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.analysis.table.type.JmmType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmArrayType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType;
+import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.ast.JmmNode;
 import pt.up.fe.comp2026.ast.TypeUtils;
 import pt.up.fe.specs.util.collections.AccumulatorMap;
@@ -27,12 +23,16 @@ public class OptUtils {
     );
 
 
-    private final AccumulatorMap<String> temporaries;
+    private AccumulatorMap<String> temporaries;
 
     private final TypeUtils types;
 
     public OptUtils(TypeUtils types) {
         this.types = types;
+        this.temporaries = new AccumulatorMap<>();
+    }
+
+    public void resetTemporaries() {
         this.temporaries = new AccumulatorMap<>();
     }
 
@@ -59,12 +59,29 @@ public class OptUtils {
     }
 
     public String toOllirType(JmmType type) {
-            return "." + toPrimitiveOllirType((JmmPrimitiveType) type);
+
+        if (type instanceof JmmArrayType arrayType) {
+            return ".array" + toOllirType(arrayType.itemType());
+        }
+
+        if (type instanceof JmmClassType classType) {
+            return "." + classType.name();
+        }
+
+        if (type instanceof JmmPrimitiveType primitiveType) {
+            return "." + toPrimitiveOllirType(primitiveType);
+        }
+
+        throw new RuntimeException("Unknown JmmType: " + type.getClass().getSimpleName());
     }
 
     private String toPrimitiveOllirType(JmmPrimitiveType type) {
-        System.out.println("[TODO] OptUtils.toPrimitiveOllirType(): Assumes it is always int, needs to be expanded");
-        return "i32";
+        return switch (type) {
+            case INT -> "i32";
+            case BOOLEAN -> "bool";
+            case VOID -> "V";
+            default -> throw new RuntimeException("Unknown primitive type: " + type.name());
+        };
     }
 
     public String sanitizeId(String id) {
