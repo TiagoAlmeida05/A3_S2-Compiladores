@@ -121,7 +121,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         var valueResult = exprVisitor.visit(node.getChild(1));
 
         // Resolve element type (array type -> item type)
-        JmmType arrayType = types.getExprType(node.getChild(0));
+        JmmType arrayType = lookupVarType(varName);
         JmmType elemType = (arrayType instanceof JmmArrayType arr) ? arr.itemType() : TypeUtils.intType();
         String elemTypeStr = ollirTypes.toOllirType(elemType);
 
@@ -138,6 +138,19 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         code.append(END_STMT);
 
         return code.toString();
+    }
+
+    private JmmType lookupVarType(String name) {
+        if (currentMethod != null) {
+            var param = currentMethod.getParameter(name);
+            if (param.isPresent()) return param.get().type();
+
+            var local = currentMethod.getLocalVariable(name);
+            if (local.isPresent()) return local.get().type();
+        }
+        var field = table.getField(name);
+        if (field.isPresent()) return field.get().type();
+        throw new RuntimeException("Unknown variable: " + name);
     }
 
     private String visitExprStmt(JmmNode node, Void unused) {
