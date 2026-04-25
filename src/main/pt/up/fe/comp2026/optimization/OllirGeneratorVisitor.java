@@ -80,12 +80,9 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
 
     private String visitAssignStmt(JmmNode node, Void unused) {
-        // TODO: Several hard-coded things, should be rewritten
 
         var rhs = exprVisitor.visit(node.getChild(0));
 
-        // code to compute self
-        // statement has type of lhs
         var varName = node.get(JmmAttributes.ASSIGN_STMT.VAR);
 
         JmmType thisType = types.getExprType(node.getChild(0));
@@ -95,7 +92,6 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
         var code = new StringBuilder();
 
-        // code to compute the children
         code.append(rhs.getComputation());
 
         code.append(varCode);
@@ -116,11 +112,9 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     private String visitArrayAssignStmt(JmmNode node, Void unused) {
         var varName = node.get("name");
 
-        // index expression (child 0) and value expression (child 1)
         var indexResult = exprVisitor.visit(node.getChild(0));
         var valueResult = exprVisitor.visit(node.getChild(1));
 
-        // Resolve element type (array type -> item type)
         JmmType arrayType = lookupVarType(varName);
         JmmType elemType = (arrayType instanceof JmmArrayType arr) ? arr.itemType() : TypeUtils.intType();
         String elemTypeStr = ollirTypes.toOllirType(elemType);
@@ -129,7 +123,6 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         code.append(indexResult.getComputation());
         code.append(valueResult.getComputation());
 
-        // arrayVar[index.i32].i32 :=.i32 value.i32;
         code.append(ollirTypes.sanitizeId(varName));
         code.append("[").append(indexResult.getCode()).append("]");
         code.append(elemTypeStr);
@@ -157,8 +150,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         var result = exprVisitor.visit(node.getChild(0));
         var code = new StringBuilder();
         code.append(result.getComputation());
-        // If the expression itself is a bare invocation it ends with ;\n already,
-        // otherwise we need to emit the code (e.g. a standalone temp assignment).
+
         if (!result.getCode().isEmpty()) {
             code.append(result.getCode()).append(END_STMT);
         }
@@ -196,29 +188,23 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
         var code = new StringBuilder();
 
-        // Compute condition
         code.append(condResult.getComputation());
 
-        // if (cond) goto then_N;
         code.append("if (")
                 .append(condResult.getCode())
                 .append(") goto ")
                 .append(thenLabel)
                 .append(END_STMT);
 
-        // Else body (child 2 if present, otherwise empty)
         if (node.getNumChildren() >= 3) {
             code.append(visit(node.getChild(2)));
         }
 
-        // goto endif_N;
         code.append("goto ").append(endifLabel).append(END_STMT);
 
-        // then_N:
         code.append(thenLabel).append(":\n");
         code.append(visit(node.getChild(1)));
 
-        // endif_N:
         code.append(endifLabel).append(":\n");
 
         return code.toString();
@@ -233,24 +219,18 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
         var code = new StringBuilder();
 
-        // loop_label:
         code.append(loopLabel).append(":\n");
         code.append(condResult.getComputation());
 
-        // if (cond) goto body_label;
         code.append("if (").append(condResult.getCode()).append(") goto ").append(bodyLabel).append(END_STMT);
 
-        // goto end_label;
         code.append("goto ").append(endLabel).append(END_STMT);
 
-        // body_label:
         code.append(bodyLabel).append(":\n");
         code.append(visit(node.getChild(1)));
 
-        // goto loop_label;
         code.append("goto ").append(loopLabel).append(END_STMT);
 
-        // end_label:
         code.append(endLabel).append(":\n");
 
         return code.toString();
@@ -260,7 +240,6 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
         currentMethod = table.getMethod(TypeUtils.with(table).getMethodDeclSignature(node)).orElseThrow();
 
-        // Reset temporaries for each new method so names start from 0
         ollirTypes.resetTemporaries();
 
         StringBuilder code = new StringBuilder(".method ");
@@ -280,7 +259,6 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         code.append(name);
 
         // params
-        // TODO: Hardcoded for a single parameter, needs to be expanded
         var paramNodes = node.getChildren(PARAM);
         String paramsCode = paramNodes.stream()
                 .map(this::visit)
@@ -288,14 +266,14 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         code.append("(").append(paramsCode).append(")");
 
 
-        // type
+
         var retType = ollirTypes.toOllirType(currentMethod.returnType());//table.getReturnType(node.get("name")));
         code.append(retType);
         code.append(L_BRACKET);
 
         var stmts = node.getChildren(STMT);
         if (!stmts.isEmpty()) {
-            // rest of its children stmts
+
             var stmtsCode = stmts.stream().map(this::visit).collect(Collectors.joining("\n   ", "   ", ""));
             code.append(stmtsCode);
         }

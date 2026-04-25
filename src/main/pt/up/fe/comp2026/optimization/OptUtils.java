@@ -44,7 +44,6 @@ public class OptUtils {
 
     public String nextTemp(String prefix) {
 
-        // Subtract 1 because the base is 1
         var nextTempNum = temporaries.add(prefix) - 1;
 
         return prefix + nextTempNum;
@@ -85,12 +84,10 @@ public class OptUtils {
     }
 
     public String sanitizeId(String id) {
-        // If id is an OLLIR keyword, return a string literal with the id
         if (OLLIR_KEYWORDS.contains(id)) {
             return '"' + id + '"';
         }
 
-        // If id starts with $, escape it
         if (id.startsWith("$")) {
             return '"' + id + '"';
         }
