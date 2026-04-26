@@ -45,8 +45,9 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         addVisit(ARRAY_ACCESS_EXPR, this::visitArrayAccess);
         addVisit(ARRAY_LENGTH_EXPR, this::visitLength);
         addVisit(NEW_OBJECT_EXPR, this::visitNewObject);
-        addVisit(NEW_ARRAY_EXPR, this::visitNewArray);
+        addVisit(NEW_INT_ARRAY_EXPR, this::visitNewArray);
         addVisit(METHOD_CALL_EXPR, this::visitMethodCall);
+
     }
 
     private OllirExprResult visitInteger(JmmNode node, Void unused) {
@@ -181,14 +182,23 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         var calleeNode = node.getChild(0);
         var calleeResult = visit(calleeNode);
 
-        List<JmmNode> argNodes = node.getChildren().subList(1, node.getChildren().size());
+        java.util.List<JmmNode> argNodes = new java.util.ArrayList<>();
+        for (int i = 1; i < node.getNumChildren(); i++){
+            JmmNode child = node.getChild(i);
+            if (child.getKind().toString().toUpperCase().contains("ARG_LIST")){
+                argNodes.addAll(child.getChildren());
+            } else {
+                argNodes.add(child);
+            }
+
+        }
         List<OllirExprResult> args = argNodes.stream().map(this::visit).toList();
 
         StringBuilder computation = new StringBuilder();
         computation.append(calleeResult.getComputation());
         for (var arg : args) computation.append(arg.getComputation());
 
-        String methodName = node.get("name");
+        String methodName = node.get("method");
         JmmType retType = types.getExprType(node);
         String retOllirType = ollirTypes.toOllirType(retType);
 
