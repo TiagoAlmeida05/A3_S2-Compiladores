@@ -27,13 +27,19 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
     private final TypeUtils types;
     private final OptUtils ollirTypes;
 
+    private pt.up.fe.comp.jmm.analysis.table.MethodSymbol currentMethod;
+
 
     public OllirExprGeneratorVisitor(SymbolTable table, OptUtils ollirTypes) {
         this.table = table;
         this.types = new TypeUtils(table);
-        this.ollirTypes = ollirTypes; // We need to pass ollirTypes, to ensure labels are unique
+        this.ollirTypes = ollirTypes;
+        this.currentMethod = null;
     }
 
+    public void setCurrentMethod(pt.up.fe.comp.jmm.analysis.table.MethodSymbol method) {
+        this.currentMethod = method;
+    }
 
     @Override
     protected void buildVisitor() {
@@ -47,6 +53,7 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         addVisit(NEW_OBJECT_EXPR, this::visitNewObject);
         addVisit(NEW_INT_ARRAY_EXPR, this::visitNewArray);
         addVisit(METHOD_CALL_EXPR, this::visitMethodCall);
+        addVisit(PRIORITY_EXPR, this::visitPriorityExpr);
 
     }
 
@@ -183,9 +190,9 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         var calleeResult = visit(calleeNode);
 
         java.util.List<JmmNode> argNodes = new java.util.ArrayList<>();
-        for (int i = 1; i < node.getNumChildren(); i++){
+        for (int i = 1; i < node.getNumChildren(); i++) {
             JmmNode child = node.getChild(i);
-            if (child.getKind().toString().toUpperCase().contains("ARG_LIST")){
+            if (child.getKind().toString().toUpperCase().contains("ARG_LIST")) {
                 argNodes.addAll(child.getChildren());
             } else {
                 argNodes.add(child);
@@ -200,7 +207,8 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
 
         String methodName = node.get("method");
         JmmType retType = types.getExprType(node);
-        String retOllirType = ollirTypes.toOllirType(retType);
+
+        String retOllirType = toSafeOllirType(retType);
 
         String invokeKind = resolveInvokeKind(calleeNode);
 
@@ -214,7 +222,10 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
                 + (argsCode.isEmpty() ? "" : ", " + argsCode)
                 + ")" + retOllirType;
 
-        if (retOllirType.equals(".V")) {
+        boolean isVoid = retType instanceof JmmPrimitiveType
+                && retType.equals(JmmPrimitiveType.VOID);
+
+        if (isVoid) {
             computation.append(callExpr).append(END_STMT);
             return new OllirExprResult("", computation);
         }
@@ -227,6 +238,20 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         return new OllirExprResult(tempVar, computation);
     }
 
+    private String toSafeOllirType(JmmType type) {
+        if (type instanceof JmmClassType classType) {
+            String name = classType.name();
+            String fqn = classType.fullyQualifiedName();
+
+            if (name == null || name.isEmpty() || name.equals("unknown")) {
+                return ".i32";
+            }
+
+            return "." + name;
+        }
+        return ollirTypes.toOllirType(type);
+    }
+
     private String resolveInvokeKind(JmmNode calleeNode) {
         JmmType calleeType = types.getExprType(calleeNode);
 
@@ -234,7 +259,26 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
             return "invokestatic";
         }
 
+        if (calleeNode.getKind().toString().toUpperCase().contains("VAR_REF")) {
+            String varName = calleeNode.get("name");
+            boolean isImportedClass = table.getImports().stream()
+                    .anyMatch(imp -> imp.equals(varName) || imp.endsWith("." + varName));
+            // Also check it's not a local variable or parameter
+            boolean isLocalVar = false;
+            if (currentMethod != null) {
+                isLocalVar = currentMethod.getParameter(varName).isPresent()
+                        || currentMethod.getLocalVariable(varName).isPresent();
+            }
+            if (isImportedClass && !isLocalVar) {
+                return "invokestatic";
+            }
+        }
+
         return "invokevirtual";
+    }
+
+    private OllirExprResult visitPriorityExpr(JmmNode node, Void unused) {
+        return visit(node.getChild(0));
     }
 
 }

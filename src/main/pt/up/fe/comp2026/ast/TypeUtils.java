@@ -155,8 +155,12 @@ public class TypeUtils {
 
         var methodNode = varRefExpr.getAncestor(METHOD_DECL).orElse(null);
         if (methodNode != null) {
-            var signature = getMethodDeclSignature(methodNode);
-            var method = table.getMethod(signature).orElse(null);
+            var methodName = methodNode.get("name");
+
+            var method = table.getMethods().stream()
+                    .filter(m -> m.name().equals(methodName))
+                    .findFirst()
+                    .orElse(null);
             if (method != null) {
                 var param = method.getParameter(name);
                 if (param.isPresent()) return param.get().type();
@@ -173,6 +177,12 @@ public class TypeUtils {
         if (importedName.isPresent()) {
             return JmmClassType.ofInstance(importedName.get(), true);
         }
+
+        if (table.getImports().stream().anyMatch(imp ->
+                imp.endsWith("." + name) || imp.equals(name))) {
+            return JmmClassType.ofInstance(name, true);
+        }
+
 
         throw new RuntimeException("Variable not found: " + name);
     }

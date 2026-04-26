@@ -1,12 +1,12 @@
 package pt.up.fe.comp2026.optimization;
 
 import pt.up.fe.comp.jmm.analysis.table.MethodSymbol;
+import pt.up.fe.comp.jmm.analysis.table.Signature;
 import pt.up.fe.comp.jmm.analysis.table.SymbolTable;
 import pt.up.fe.comp.jmm.analysis.table.type.JmmType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmArrayType;
 import pt.up.fe.comp.jmm.ast.AJmmVisitor;
 import pt.up.fe.comp.jmm.ast.JmmNode;
-import pt.up.fe.comp2026.ast.NodeUtils;
 import pt.up.fe.comp2026.ast.TypeUtils;
 import pt.up.fe.comp2026.jmm.ast.JmmAttributes;
 
@@ -74,7 +74,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
 
     private String visitPackageDecl(JmmNode packageDecl, Void unused) {
-        return "" ;
+        return "";
     }
 
 
@@ -85,6 +85,15 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         var varName = node.get(JmmAttributes.ASSIGN_STMT.VAR);
 
         JmmType thisType = types.getExprType(node.getChild(0));
+
+        if (isUnknownType(thisType)) {
+            try {
+                thisType = lookupVarType(varName);
+            } catch (RuntimeException ignored) {
+                // keep original type if lhs also not found
+            }
+        }
+
         String typeString = ollirTypes.toOllirType(thisType);
         var varCode = ollirTypes.sanitizeId(varName) + typeString;
 
@@ -105,6 +114,14 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         code.append(END_STMT);
 
         return code.toString();
+    }
+
+    private boolean isUnknownType(JmmType type) {
+        if (type instanceof pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType ct) {
+            String fqn = ct.fullyQualifiedName();
+            return fqn == null || fqn.equals("unknown") || fqn.isEmpty();
+        }
+        return false;
     }
 
 
@@ -242,7 +259,19 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
     private String visitMethodDecl(JmmNode node, Void unused) {
 
-        currentMethod = table.getMethod(TypeUtils.with(table).getMethodDeclSignature(node)).orElseThrow();
+        Signature methodSig = TypeUtils.with(table).getMethodDeclSignature(node);
+        var methodOpt = table.getMethod(methodSig);
+        if (methodOpt.isEmpty()) {
+            // Fallback: lookup by simple method name
+            String methodName = node.get("name");
+            methodOpt = table.getMethods().stream()
+                    .filter(m -> m.name().equals(methodName))
+                    .findFirst();
+        }
+        currentMethod = methodOpt.orElseThrow(() ->
+                new RuntimeException("Could not find method: " + node.get("name")));
+
+        exprVisitor.setCurrentMethod(currentMethod);
 
         ollirTypes.resetTemporaries();
 
@@ -270,7 +299,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
                     .collect(Collectors.joining(", "));
             code.append("(").append(paramsCode).append(")");
 
-            var retType = ollirTypes.toOllirType(currentMethod.returnType());//table.getReturnType(node.get("name")));
+            var retType = ollirTypes.toOllirType(currentMethod.returnType());
             code.append(retType);
             code.append(L_BRACKET);
         }
@@ -295,8 +324,12 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         code.append(NL);
         code.append("public ").append(table.getClassName());
 
-        if(table.getSuperFullyQualifiedName() != null) {
-            code.append(" extends ").append(table.getSuperFullyQualifiedName());
+        String superFqn = table.getSuperFullyQualifiedName();
+        if (superFqn != null) {
+            String superSimple = superFqn.contains(".")
+                    ? superFqn.substring(superFqn.lastIndexOf('.') + 1)
+                    : superFqn;
+            code.append(" extends ").append(superSimple);
         }
 
         code.append(L_BRACKET);
@@ -334,7 +367,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         StringBuilder code = new StringBuilder();
 
         String fqn = table.getFullyQualifiedName();
-        if(fqn != null && fqn.contains(".")) {
+        if (fqn != null && fqn.contains(".")) {
             String pkg = fqn.substring(0, fqn.lastIndexOf('.'));
             code.append("package ").append(pkg).append(";\n\n");
         }
