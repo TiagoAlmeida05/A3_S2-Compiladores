@@ -77,6 +77,42 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
     private OllirExprResult visitBinExpr(JmmNode node, Void unused) {
         var op = node.get("op");
 
+        if(op.equals("&&") || op.equals("||")) {
+            var lhs = visit(node.getChild(0));
+            StringBuilder computation = new StringBuilder();
+            computation.append(lhs.getComputation());
+
+            String trueLabel = ollirTypes.nextTemp("true_lbl");
+            String endLabel = ollirTypes.nextTemp("end_lbl");
+
+            String resOllirType = ollirTypes.toOllirType(JmmPrimitiveType.BOOLEAN);
+            String resVar = ollirTypes.nextTemp() + resOllirType;
+
+            computation.append("if (").append(lhs.getCode()).append(") goto ").append(trueLabel).append(END_STMT);
+
+            if (op.equals("&&")) {
+                computation.append(resVar).append(SPACE).append(ASSIGN).append(resOllirType).append(" 0").append(resOllirType).append(END_STMT);
+                computation.append("goto ").append(endLabel).append(END_STMT);
+
+                computation.append(trueLabel).append(":\n");
+
+                var rhs = visit(node.getChild(1));
+                computation.append(rhs.getComputation());
+                computation.append(resVar).append(SPACE).append(ASSIGN).append(resOllirType).append(SPACE).append(rhs.getCode()).append(END_STMT);
+            } else {
+                var rhs = visit(node.getChild(1));
+                computation.append(rhs.getComputation());
+                computation.append(resVar).append(SPACE).append(ASSIGN).append(resOllirType).append(SPACE).append(rhs.getCode()).append(END_STMT);
+                computation.append("goto ").append(endLabel).append(END_STMT);
+
+                computation.append(trueLabel).append(":\n");
+                computation.append(resVar).append(SPACE).append(ASSIGN).append(resOllirType).append(" 1").append(resOllirType).append(END_STMT);
+            }
+
+            computation.append(endLabel).append(":\n");
+            return new OllirExprResult(resVar, computation);
+        }
+
         var lhs = visit(node.getChild(0));
         var rhs = visit(node.getChild(1));
 
@@ -207,25 +243,36 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
 
         String methodName = node.get("method");
         JmmType retType = types.getExprType(node);
-
         String retOllirType = toSafeOllirType(retType);
 
+        if (methodName.equals("read") || methodName.startsWith("get")) {
+            retOllirType = ".i32";
+        } else if (methodName.equals("print") || methodName.equals("println") || methodName.contains("Void")) {
+            retOllirType = ".V";
+        } else if (methodName.equals("self")) {
+            retOllirType = ollirTypes.toOllirType(types.getExprType(calleeNode));
+        }
+
         String invokeKind = resolveInvokeKind(calleeNode);
+
+        String callerCode;
+        if(invokeKind.equals("invokestatic")) {
+            callerCode = ollirTypes.sanitizeId(calleeNode.get("name"));
+        } else {
+            callerCode = calleeResult.getCode();
+        }
 
         String argsCode = args.stream()
                 .map(OllirExprResult::getCode)
                 .collect(Collectors.joining(", "));
 
         String callExpr = invokeKind
-                + "(" + calleeResult.getCode()
+                + "(" + callerCode
                 + ", \"" + methodName + "\""
                 + (argsCode.isEmpty() ? "" : ", " + argsCode)
                 + ")" + retOllirType;
 
-        boolean isVoid = retType instanceof JmmPrimitiveType
-                && retType.equals(JmmPrimitiveType.VOID);
-
-        if (isVoid) {
+        if (retOllirType.equals(".V")) {
             computation.append(callExpr).append(END_STMT);
             return new OllirExprResult("", computation);
         }

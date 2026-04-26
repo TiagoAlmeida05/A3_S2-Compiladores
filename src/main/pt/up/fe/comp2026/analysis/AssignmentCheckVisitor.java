@@ -111,6 +111,10 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         String rightName = rightClass.name();
         if (leftName.equals(rightName)) return true;
 
+        if(leftName.equals("Object") || leftName.equals("java.lang.Object")) {
+            return true;
+        }
+
         String currentFQN = table.getFullyQualifiedName();
         String currentSimple = table.getClassName();
         String superFQN = table.getSuperFullyQualifiedName();
