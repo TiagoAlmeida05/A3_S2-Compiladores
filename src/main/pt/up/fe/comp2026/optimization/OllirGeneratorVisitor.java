@@ -50,6 +50,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     protected void buildVisitor() {
 
         addVisit(PROGRAM, this::visitProgram);
+        addVisit(PACKAGE_DECL, this::visitPackageDecl);
         addVisit(CLASS_DECL, this::visitClass);
         addVisit(VAR_DECL, this::simpleVarDecl);
         addVisit(PARAM, this::visitParam);
@@ -60,6 +61,8 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         addVisit(IF_ELSE_STMT, this::visitIfStmt);
         addVisit(WHILE_STMT, this::visitWhileStmt);
         addVisit(ARRAY_ASSIGN_STMT, this::visitArrayAssignStmt);
+        addVisit(BLOCK_STMT, this::visitBlockStmt);
+        addVisit(RETURN_VOID_STMT, this::visitReturnVoid);
 //        setDefaultVisit(this::defaultVisit);
     }
 
@@ -74,7 +77,12 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     }
 
 
-    private String visitPackageDecl(JmmNode packageDecl, Void unused) {
+    private String visitPackageDecl(JmmNode node, Void unused) {
+        String fqn = table.getFullyQualifiedName();
+        if (fqn != null && fqn.contains(".")) {
+            String pkg = fqn.substring(0, fqn.lastIndexOf('.'));
+            return "package " + pkg + ";\n\n";
+        }
         return "";
     }
 
@@ -372,15 +380,11 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     }
 
     private String visitProgram(JmmNode node, Void unused) {
-
         StringBuilder code = new StringBuilder();
 
-        String fqn = table.getFullyQualifiedName();
-        if (fqn != null && fqn.contains(".")) {
-            String pkg = fqn.substring(0, fqn.lastIndexOf('.'));
-            code.append("package ").append(pkg).append(";\n\n");
+        for (JmmNode child : node.getChildren(PACKAGE_DECL)){
+            code.append(visit(child));
         }
-
         for (String imp : table.getImports()) {
             code.append("import ").append(imp).append(";\n");
         }
@@ -389,6 +393,19 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         }
 
         return code.toString();
+    }
+
+    private String visitBlockStmt(JmmNode node, Void unused) {
+        StringBuilder code = new StringBuilder();
+
+        for(JmmNode child : node.getChildren()) {
+            code.append(visit(child));
+        }
+        return code.toString();
+    }
+
+    private String visitReturnVoid(JmmNode node, Void unused) {
+        return "ret.V;\n";
     }
 
     /**
