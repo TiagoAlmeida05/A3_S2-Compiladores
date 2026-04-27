@@ -54,6 +54,7 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         addVisit(NEW_INT_ARRAY_EXPR, this::visitNewArray);
         addVisit(METHOD_CALL_EXPR, this::visitMethodCall);
         addVisit(PRIORITY_EXPR, this::visitPriorityExpr);
+        addVisit(UNARY_OP, this::visitUnaryOp);
 
     }
 
@@ -77,7 +78,7 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
     private OllirExprResult visitBinExpr(JmmNode node, Void unused) {
         var op = node.get("op");
 
-        if(op.equals("&&") || op.equals("||")) {
+        if (op.equals("&&") || op.equals("||")) {
             var lhs = visit(node.getChild(0));
             StringBuilder computation = new StringBuilder();
             computation.append(lhs.getComputation());
@@ -138,15 +139,39 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
 
     private OllirExprResult visitVarRef(JmmNode node, Void unused) {
 
-        var id = ollirTypes.sanitizeId(node.get("name"));
+        var name = node.get("name");
+        var id = ollirTypes.sanitizeId(name);
+
         JmmType type = types.getExprType(node);
         String ollirType = ollirTypes.toOllirType(type);
 
+        boolean isField = table.getField(name).isPresent();
 
-        String code = id + ollirType;
+        boolean isLocal = false;
+        if (currentMethod != null) {
+            isLocal = currentMethod.getParameter(name).isPresent()
+                    || currentMethod.getLocalVariable(name).isPresent();
+        }
 
-        return new OllirExprResult(code);
+        // If it's a field and NOT a local/param → use getfield
+        if (isField && !isLocal) {
 
+            String temp = ollirTypes.nextTemp() + ollirType;
+
+            StringBuilder computation = new StringBuilder();
+
+            computation.append(temp).append(SPACE)
+                    .append(ASSIGN).append(ollirType).append(SPACE)
+                    .append("getfield(this, ")
+                    .append(id).append(ollirType)
+                    .append(")").append(ollirType)
+                    .append(END_STMT);
+
+            return new OllirExprResult(temp, computation);
+        }
+
+        // Otherwise normal variable
+        return new OllirExprResult(id + ollirType);
     }
 
     private OllirExprResult visitArrayAccess(JmmNode node, Void unused) {
@@ -256,7 +281,7 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         String invokeKind = resolveInvokeKind(calleeNode);
 
         String callerCode;
-        if(invokeKind.equals("invokestatic")) {
+        if (invokeKind.equals("invokestatic")) {
             callerCode = ollirTypes.sanitizeId(calleeNode.get("name"));
         } else {
             callerCode = calleeResult.getCode();
@@ -322,6 +347,25 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         }
 
         return "invokevirtual";
+    }
+
+    private OllirExprResult visitUnaryOp(JmmNode node, Void unused) {
+
+        var operand = visit(node.getChild(0));
+
+        StringBuilder computation = new StringBuilder();
+        computation.append(operand.getComputation());
+
+        String ollirType = ollirTypes.toOllirType(JmmPrimitiveType.BOOLEAN);
+        String temp = ollirTypes.nextTemp() + ollirType;
+
+        computation.append(temp).append(SPACE)
+                .append(ASSIGN).append(ollirType).append(SPACE)
+                .append("!.bool ")
+                .append(operand.getCode())
+                .append(END_STMT);
+
+        return new OllirExprResult(temp, computation);
     }
 
     private OllirExprResult visitPriorityExpr(JmmNode node, Void unused) {
