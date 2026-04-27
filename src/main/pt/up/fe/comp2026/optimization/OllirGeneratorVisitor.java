@@ -69,7 +69,8 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     }
 
     private String visitParam(JmmNode varDecl, Void unused) {
-        return varDecl.get("name") + ollirTypes.toOllirType(varDecl.getObject("typeNode", JmmNode.class));
+        var name = ollirTypes.sanitizeId(varDecl.get("name"));
+        return name + ollirTypes.toOllirType(varDecl.getObject("typeNode", JmmNode.class));
     }
 
 
@@ -90,7 +91,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         boolean isField = false;
         if (currentMethod != null) {
             boolean isLocalOrParam = currentMethod.getLocalVariable(varName).isPresent() ||
-                                     currentMethod.getParameter(varName).isPresent();
+                    currentMethod.getParameter(varName).isPresent();
             if (!isLocalOrParam) {
                 isField = table.getField(varName).isPresent();
             }
@@ -106,11 +107,11 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
                     .append(rhs.getCode())
                     .append(").V;\n");
         } else {
-           var varCode = ollirTypes.sanitizeId(varName) + typeString;
-           code.append(varCode).append(SPACE)
-                   .append(ASSIGN).append(typeString).append(SPACE)
-                   .append(rhs.getCode())
-                   .append(END_STMT);
+            var varCode = ollirTypes.sanitizeId(varName) + typeString;
+            code.append(varCode).append(SPACE)
+                    .append(ASSIGN).append(typeString).append(SPACE)
+                    .append(rhs.getCode())
+                    .append(END_STMT);
         }
 
         return code.toString();
@@ -351,11 +352,23 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     }
 
     private String buildConstructor() {
+
+        String superFqn = table.getSuperFullyQualifiedName();
+
+        String superName;
+        if (superFqn == null) {
+            superName = "Object";
+        } else {
+            superName = superFqn.contains(".")
+                    ? superFqn.substring(superFqn.lastIndexOf('.') + 1)
+                    : superFqn;
+        }
+
         return """
-                .construct %s().V {
-                    invokespecial(this, "<init>").V;
+                .construct ().V {
+                    invokespecial(this.%s, "<init>").V;
                 }
-                """.formatted(table.getClassName());
+                """.formatted(superName);
     }
 
     private String visitProgram(JmmNode node, Void unused) {
