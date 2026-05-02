@@ -55,6 +55,7 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         addVisit(METHOD_CALL_EXPR, this::visitMethodCall);
         addVisit(PRIORITY_EXPR, this::visitPriorityExpr);
         addVisit(UNARY_OP, this::visitUnaryOp);
+        addVisit(ARRAY_INIT_EXPR, this::visitArrayInitExpr);
 
     }
 
@@ -230,17 +231,38 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
     }
 
     private OllirExprResult visitNewArray(JmmNode node, Void unused) {
-        var sizeExpr = visit(node.getChild(0));
+        // Collect all dimension size expressions (children of the node)
+        List<JmmNode> dimNodes = node.getChildren();
+
+        List<OllirExprResult> dimResults = dimNodes.stream().map(this::visit).toList();
 
         String elemOllirType = ollirTypes.toOllirType(TypeUtils.intType());
-        String arrayOllirType = ".array" + elemOllirType;
+
+        // Build the array OLLIR type with correct number of dimensions
+        // e.g. 2D → .array.array.i32
+        int numDims = dimNodes.size();
+        StringBuilder arrayOllirTypeSB = new StringBuilder();
+        for (int i = 0; i < numDims; i++) {
+            arrayOllirTypeSB.append(".array");
+        }
+        arrayOllirTypeSB.append(elemOllirType);
+        String arrayOllirType = arrayOllirTypeSB.toString();
+
         String tempVar = ollirTypes.nextTemp() + arrayOllirType;
 
         StringBuilder computation = new StringBuilder();
-        computation.append(sizeExpr.getComputation());
+        for (var dim : dimResults) {
+            computation.append(dim.getComputation());
+        }
+
+        // new(array, size0.i32, size1.i32, ...).array.array.i32
+        String argsCode = dimResults.stream()
+                .map(OllirExprResult::getCode)
+                .collect(Collectors.joining(", "));
+
         computation.append(tempVar).append(SPACE)
                 .append(ASSIGN).append(arrayOllirType).append(SPACE)
-                .append("new(array, ").append(sizeExpr.getCode()).append(")")
+                .append("new(array, ").append(argsCode).append(")")
                 .append(arrayOllirType).append(END_STMT);
 
         return new OllirExprResult(tempVar, computation);
@@ -372,4 +394,34 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         return visit(node.getChild(0));
     }
 
+    private OllirExprResult visitArrayInitExpr(JmmNode node, Void unused) {
+        List<JmmNode> elements = node.getChildren();
+        int size = elements.size();
+
+        String elemOllirType = ollirTypes.toOllirType(TypeUtils.intType());
+        String arrayOllirType = ".array" + elemOllirType;
+        String arrayVar = ollirTypes.nextTemp() + arrayOllirType;
+
+        StringBuilder computation = new StringBuilder();
+
+        // 1. Allocate the array: tmp0.array.i32 := new(array, 3.i32).array.i32;
+        computation.append(arrayVar).append(SPACE)
+                .append(ASSIGN).append(arrayOllirType).append(SPACE)
+                .append("new(array, ").append(size).append(elemOllirType).append(")")
+                .append(arrayOllirType).append(END_STMT);
+
+        // 2. Store each element: tmp0.array.i32[0.i32].i32 := 10.i32;
+        for (int i = 0; i < elements.size(); i++) {
+            var elemResult = visit(elements.get(i));
+            computation.append(elemResult.getComputation());
+            computation.append(arrayVar)
+                    .append("[").append(i).append(elemOllirType).append("]")
+                    .append(elemOllirType)
+                    .append(SPACE).append(ASSIGN).append(elemOllirType).append(SPACE)
+                    .append(elemResult.getCode())
+                    .append(END_STMT);
+        }
+
+        return new OllirExprResult(arrayVar, computation);
+    }
 }
