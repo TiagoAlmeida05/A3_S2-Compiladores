@@ -264,17 +264,44 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
     private String visitMethodDecl(JmmNode node, Void unused) {
 
-        Signature methodSig = TypeUtils.with(table).getMethodDeclSignature(node);
-        var methodOpt = table.getMethod(methodSig);
+        // Build the lookup directly from the AST parameter nodes to correctly handle
+        // overloaded methods. getMethodDeclSignature can misidentify overloads by reading
+        // the "param" attribute of PARAM_LIST instead of iterating all PARAM children.
+        String methodName = node.get("name");
+        var paramListNodes = node.getChildren(PARAM_LIST);
+        java.util.List<JmmNode> declaredParamNodes = paramListNodes.isEmpty()
+                ? java.util.Collections.emptyList()
+                : paramListNodes.get(0).getChildren(PARAM);
+        int declaredParamCount = declaredParamNodes.size();
+        java.util.List<String> declaredParamNames = declaredParamNodes.stream()
+                .map(p -> p.get("name"))
+                .toList();
+
+        // Primary: match by name + count + param names (handles all overload cases)
+        var methodOpt = table.getMethods().stream()
+                .filter(m -> m.name().equals(methodName)
+                        && m.parameters().size() == declaredParamCount)
+                .filter(m -> {
+                    var symParamNames = m.parameters().stream()
+                            .map(p -> p.name())
+                            .toList();
+                    return declaredParamNames.isEmpty() || symParamNames.equals(declaredParamNames);
+                })
+                .findFirst();
+        // Fallback: match by name + count only
         if (methodOpt.isEmpty()) {
-            // Fallback: lookup by simple method name
-            String methodName = node.get("name");
             methodOpt = table.getMethods().stream()
-                    .filter(m -> m.name().equals(methodName))
+                    .filter(m -> m.name().equals(methodName)
+                            && m.parameters().size() == declaredParamCount)
                     .findFirst();
         }
+        // Last resort: use getMethodDeclSignature
+        if (methodOpt.isEmpty()) {
+            Signature methodSig = TypeUtils.with(table).getMethodDeclSignature(node);
+            methodOpt = table.getMethod(methodSig);
+        }
         currentMethod = methodOpt.orElseThrow(() ->
-                new RuntimeException("Could not find method: " + node.get("name")));
+                new RuntimeException("Could not find method: " + methodName));
 
         exprVisitor.setCurrentMethod(currentMethod);
 
@@ -297,7 +324,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
             code.append(name);
 
             // params
-            var paramListNodes = node.getChildren(PARAM_LIST);
+
             var paramNodes = paramListNodes.isEmpty() ? java.util.Collections.<JmmNode>emptyList() : paramListNodes.get(0).getChildren(PARAM);
             String paramsCode = paramNodes.stream()
                     .map(this::visit)
@@ -316,12 +343,45 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
             code.append(stmtsCode);
         }
 
+        // Append a fallback return if the method body doesn't end with a ret statement.
+        // Required by OLLIR even for unreachable code (e.g. after while(true)).
+        if (!methodBodyEndsWithRet(stmts)) {
+            String retOllirType = ollirTypes.toOllirType(currentMethod.returnType());
+            if (retOllirType.equals(".V")) {
+                code.append("   ret.V;\n");
+            } else {
+                String dummyVal = retOllirType.equals(".i32") ? "0.i32"
+                        : retOllirType.equals(".bool") ? "0.bool"
+                        : "null" + retOllirType;
+                code.append("   ret").append(retOllirType).append(" ").append(dummyVal).append(";\n");
+            }
+        }
+
         code.append(R_BRACKET);
         code.append(NL);
 
         currentMethod = null;
 
         return code.toString();
+    }
+
+    private boolean methodBodyEndsWithRet(java.util.List<JmmNode> stmts) {
+        if (stmts.isEmpty()) return false;
+        return nodeEndsWithRet(stmts.get(stmts.size() - 1));
+    }
+
+    private boolean nodeEndsWithRet(JmmNode node) {
+        String kind = node.getKind().toString().toUpperCase();
+        if (kind.contains("RETURN_STMT") || kind.contains("RETURN_VOID")) {
+            return true;
+        }
+        if (kind.contains("BLOCK_STMT")) {
+            var children = node.getChildren();
+            if (!children.isEmpty()) {
+                return nodeEndsWithRet(children.get(children.size() - 1));
+            }
+        }
+        return false;
     }
 
     private String visitClass(JmmNode node, Void unused) {
@@ -382,7 +442,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     private String visitProgram(JmmNode node, Void unused) {
         StringBuilder code = new StringBuilder();
 
-        for (JmmNode child : node.getChildren(PACKAGE_DECL)){
+        for (JmmNode child : node.getChildren(PACKAGE_DECL)) {
             code.append(visit(child));
         }
         for (String imp : table.getImports()) {
@@ -398,7 +458,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     private String visitBlockStmt(JmmNode node, Void unused) {
         StringBuilder code = new StringBuilder();
 
-        for(JmmNode child : node.getChildren()) {
+        for (JmmNode child : node.getChildren()) {
             code.append(visit(child));
         }
         return code.toString();
