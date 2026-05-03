@@ -107,6 +107,12 @@ public class StatementCheckVisitor extends AnalysisVisitor {
 
     private boolean isCompatible(JmmType expected, JmmType actual, SymbolTable table) {
         if (expected.equals(actual)) return true;
+
+        if (actual instanceof pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType ct
+                && (ct.name().equals("unknown") || "unknown".equals(ct.fullyQualifiedName()))) {
+            return true;
+        }
+
         if (expected.isPrimitive() || actual.isPrimitive()) return false;
 
         try {
@@ -137,7 +143,7 @@ public class StatementCheckVisitor extends AnalysisVisitor {
 
     private Void visitFor(JmmNode forStmt, SymbolTable table) {
         if (currentMethod == null) return null;
-        
+
         for (var child : forStmt.getChildren()) {
             if (JmmKind.FOR_VAR_INIT.check(child) || JmmKind.FOR_ASSIGN_INIT.check(child)) continue;
             if (JmmKind.FOR_COMPOUND_ITER.check(child) || JmmKind.FOR_ASSIGN_ITER.check(child) || JmmKind.FOR_EXPR_ITER.check(child))

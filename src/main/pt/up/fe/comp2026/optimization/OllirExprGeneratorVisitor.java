@@ -56,6 +56,7 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         addVisit(PRIORITY_EXPR, this::visitPriorityExpr);
         addVisit(UNARY_OP, this::visitUnaryOp);
         addVisit(ARRAY_INIT_EXPR, this::visitArrayInitExpr);
+        addVisit(IMPLICIT_THIS_CALL_EXPR, this::visitImplicitThisCall);
 
     }
 
@@ -139,12 +140,18 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
     }
 
     private OllirExprResult visitVarRef(JmmNode node, Void unused) {
-
         var name = node.get("name");
         var id = ollirTypes.sanitizeId(name);
 
         JmmType type = types.getExprType(node);
         String ollirType = ollirTypes.toOllirType(type);
+
+        // Se é uma referência estática à classe (própria classe ou import usado estaticamente),
+        // devolve apenas o nome — não gera getfield nem variável local
+        if (type instanceof pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType ct && ct.staticRef()) {
+            // Para invokestatic, o caller é apenas o nome simples da classe
+            return new OllirExprResult(id + ollirType);
+        }
 
         boolean isField = table.getField(name).isPresent();
 
@@ -154,24 +161,18 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
                     || currentMethod.getLocalVariable(name).isPresent();
         }
 
-        // If it's a field and NOT a local/param → use getfield
         if (isField && !isLocal) {
-
             String temp = ollirTypes.nextTemp() + ollirType;
-
             StringBuilder computation = new StringBuilder();
-
             computation.append(temp).append(SPACE)
                     .append(ASSIGN).append(ollirType).append(SPACE)
                     .append("getfield(this, ")
                     .append(id).append(ollirType)
                     .append(")").append(ollirType)
                     .append(END_STMT);
-
             return new OllirExprResult(temp, computation);
         }
 
-        // Otherwise normal variable
         return new OllirExprResult(id + ollirType);
     }
 
@@ -218,13 +219,36 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         String ollirType = "." + className;
         String tempVar = ollirTypes.nextTemp() + ollirType;
 
+        List<JmmNode> argNodes = new java.util.ArrayList<>();
+        for (int i = 0; i < node.getNumChildren(); i++) {
+            JmmNode child = node.getChild(i);
+            if (child.getKind().toString().toUpperCase().contains("ARG_LIST")) {
+                argNodes.addAll(child.getChildren());
+            } else {
+                argNodes.add(child);
+            }
+        }
+
+        List<OllirExprResult> args = argNodes.stream().map(this::visit).toList();
+
         StringBuilder computation = new StringBuilder();
+
+        for (var arg : args) computation.append(arg.getComputation());
+
         computation.append(tempVar).append(SPACE)
                 .append(ASSIGN).append(ollirType).append(SPACE)
                 .append("new(").append(className).append(")")
                 .append(ollirType).append(END_STMT);
+        
+        String argsCode = args.stream()
+                .map(OllirExprResult::getCode)
+                .collect(Collectors.joining(", "));
+
         computation.append("invokespecial(")
-                .append(tempVar).append(", \"<init>\").V")
+                .append(tempVar)
+                .append(", \"<init>\"")
+                .append(argsCode.isEmpty() ? "" : ", " + argsCode)
+                .append(").V")
                 .append(END_STMT);
 
         return new OllirExprResult(tempVar, computation);
@@ -355,9 +379,14 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
 
         if (calleeNode.getKind().toString().toUpperCase().contains("VAR_REF")) {
             String varName = calleeNode.get("name");
+
+            if (varName.equals(table.getClassName()) ||
+                    table.getFullyQualifiedName().endsWith("." + varName)) {
+                return "invokestatic";
+            }
+
             boolean isImportedClass = table.getImports().stream()
                     .anyMatch(imp -> imp.equals(varName) || imp.endsWith("." + varName));
-            // Also check it's not a local variable or parameter
             boolean isLocalVar = false;
             if (currentMethod != null) {
                 isLocalVar = currentMethod.getParameter(varName).isPresent()
@@ -423,5 +452,53 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         }
 
         return new OllirExprResult(arrayVar, computation);
+    }
+
+    private OllirExprResult visitImplicitThisCall(JmmNode node, Void unused) {
+        var methodName = node.get("method");
+
+        // Recolher argumentos (dentro de ARG_LIST ou filhos diretos)
+        List<JmmNode> argNodes = new java.util.ArrayList<>();
+        for (int i = 0; i < node.getNumChildren(); i++) {
+            JmmNode child = node.getChild(i);
+            if (child.getKind().toString().toUpperCase().contains("ARG_LIST")) {
+                argNodes.addAll(child.getChildren());
+            } else {
+                argNodes.add(child);
+            }
+        }
+        List<OllirExprResult> args = argNodes.stream().map(this::visit).toList();
+
+        StringBuilder computation = new StringBuilder();
+        for (var arg : args) computation.append(arg.getComputation());
+
+        // Tipo de retorno
+        JmmType retType = types.getExprType(node);
+        String retOllirType = toSafeOllirType(retType);
+
+        // Caller é sempre "this.<ClassName>"
+        String thisCode = "this." + table.getClassName();
+
+        String argsCode = args.stream()
+                .map(OllirExprResult::getCode)
+                .collect(Collectors.joining(", "));
+
+        String callExpr = "invokevirtual("
+                + thisCode
+                + ", \"" + methodName + "\""
+                + (argsCode.isEmpty() ? "" : ", " + argsCode)
+                + ")" + retOllirType;
+
+        if (retOllirType.equals(".V")) {
+            computation.append(callExpr).append(END_STMT);
+            return new OllirExprResult("", computation);
+        }
+
+        String tempVar = ollirTypes.nextTemp() + retOllirType;
+        computation.append(tempVar).append(SPACE)
+                .append(ASSIGN).append(retOllirType).append(SPACE)
+                .append(callExpr).append(END_STMT);
+
+        return new OllirExprResult(tempVar, computation);
     }
 }

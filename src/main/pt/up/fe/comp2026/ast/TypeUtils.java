@@ -183,6 +183,10 @@ public class TypeUtils {
             return JmmClassType.ofInstance(name, true);
         }
 
+        // Própria classe usada como alvo de chamada estática (ex: MyClass.staticMethod())
+        if (name.equals(table.getClassName()) || table.getFullyQualifiedName().endsWith("." + name)) {
+            return JmmClassType.ofInstance(table.getFullyQualifiedName(), true); // staticRef=true
+        }
 
         throw new RuntimeException("Variable not found: " + name);
     }
@@ -213,7 +217,13 @@ public class TypeUtils {
                     return methods.getFirst().returnType();
                 }
             }
+
+            if (classType.staticRef() || table.getImports().stream()
+                    .anyMatch(imp -> imp.equals(typeName) || imp.endsWith("." + typeName))) {
+                return JmmClassType.ofInstance("unknown", true);
+            }
         }
+
         return JmmClassType.ofInstance("unknown", false);
     }
 
