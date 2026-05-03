@@ -57,6 +57,7 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
         addVisit(UNARY_OP, this::visitUnaryOp);
         addVisit(ARRAY_INIT_EXPR, this::visitArrayInitExpr);
         addVisit(IMPLICIT_THIS_CALL_EXPR, this::visitImplicitThisCall);
+        addVisit(PREFIX_OP, this::visitPrefixOp);
 
     }
 
@@ -239,7 +240,7 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
                 .append(ASSIGN).append(ollirType).append(SPACE)
                 .append("new(").append(className).append(")")
                 .append(ollirType).append(END_STMT);
-        
+
         String argsCode = args.stream()
                 .map(OllirExprResult::getCode)
                 .collect(Collectors.joining(", "));
@@ -401,22 +402,39 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
     }
 
     private OllirExprResult visitUnaryOp(JmmNode node, Void unused) {
-
+        String op = node.get("op");
         var operand = visit(node.getChild(0));
-
         StringBuilder computation = new StringBuilder();
         computation.append(operand.getComputation());
 
-        String ollirType = ollirTypes.toOllirType(JmmPrimitiveType.BOOLEAN);
-        String temp = ollirTypes.nextTemp() + ollirType;
+        if (op.equals("!")) {
+            String ollirType = ollirTypes.toOllirType(JmmPrimitiveType.BOOLEAN);
+            String temp = ollirTypes.nextTemp() + ollirType;
+            computation.append(temp).append(SPACE)
+                    .append(ASSIGN).append(ollirType).append(SPACE)
+                    .append("!.bool ")
+                    .append(operand.getCode())
+                    .append(END_STMT);
+            return new OllirExprResult(temp, computation);
+        }
 
-        computation.append(temp).append(SPACE)
-                .append(ASSIGN).append(ollirType).append(SPACE)
-                .append("!.bool ")
-                .append(operand.getCode())
-                .append(END_STMT);
+        if (op.equals("-")) {
+            String ollirType = ollirTypes.toOllirType(TypeUtils.intType());
+            String temp = ollirTypes.nextTemp() + ollirType;
+            computation.append(temp).append(SPACE)
+                    .append(ASSIGN).append(ollirType).append(SPACE)
+                    .append("0").append(ollirType).append(SPACE)
+                    .append("-.i32").append(SPACE)
+                    .append(operand.getCode())
+                    .append(END_STMT);
+            return new OllirExprResult(temp, computation);
+        }
 
-        return new OllirExprResult(temp, computation);
+        if (op.equals("+")) {
+            return operand;
+        }
+
+        throw new RuntimeException("Unknown unary operator: " + op);
     }
 
     private OllirExprResult visitPriorityExpr(JmmNode node, Void unused) {
@@ -500,5 +518,67 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
                 .append(callExpr).append(END_STMT);
 
         return new OllirExprResult(tempVar, computation);
+    }
+
+    private OllirExprResult visitPrefixOp(JmmNode node, Void unused) {
+        String op = node.get("op");
+        var operand = node.getChild(0);
+
+        if (!op.equals("++") && !op.equals("--")) {
+            var inner = visit(operand);
+            String ollirType = ollirTypes.toOllirType(TypeUtils.intType());
+            String temp = ollirTypes.nextTemp() + ollirType;
+            StringBuilder computation = new StringBuilder();
+            computation.append(inner.getComputation());
+            computation.append(temp).append(SPACE)
+                    .append(ASSIGN).append(ollirType).append(SPACE)
+                    .append("-.i32 ").append(inner.getCode())
+                    .append(END_STMT);
+            return new OllirExprResult(temp, computation);
+        }
+
+        String arithmetic = op.equals("++") ? "+" : "-";
+        String ollirType = ollirTypes.toOllirType(TypeUtils.intType());
+
+        var currentVal = visit(operand);
+
+        StringBuilder computation = new StringBuilder();
+        computation.append(currentVal.getComputation());
+
+        String temp = ollirTypes.nextTemp() + ollirType;
+        computation.append(temp).append(SPACE)
+                .append(ASSIGN).append(ollirType).append(SPACE)
+                .append(currentVal.getCode()).append(SPACE)
+                .append(arithmetic).append(ollirType).append(SPACE)
+                .append("1").append(ollirType)
+                .append(END_STMT);
+
+        if (operand.getKind().toString().toUpperCase().contains("ARRAY_ACCESS")) {
+            var arrayNode = operand.getChild(0);
+            var indexNode = operand.getChild(1);
+            var arrayResult = visit(arrayNode);
+            var indexResult = visit(indexNode);
+
+            computation.append(arrayResult.getComputation());
+            computation.append(indexResult.getComputation());
+
+            JmmType arrayType = types.getExprType(arrayNode);
+            String arrayOllirType = ollirTypes.toOllirType(arrayType);
+
+            computation.append(arrayResult.getCode())
+                    .append("[").append(indexResult.getCode()).append("]")
+                    .append(ollirType).append(SPACE)
+                    .append(ASSIGN).append(ollirType).append(SPACE)
+                    .append(temp)
+                    .append(END_STMT);
+        } else if (operand.getKind().toString().toUpperCase().contains("VAR_REF")) {
+            String varName = operand.get("name");
+            computation.append(ollirTypes.sanitizeId(varName)).append(ollirType).append(SPACE)
+                    .append(ASSIGN).append(ollirType).append(SPACE)
+                    .append(temp)
+                    .append(END_STMT);
+        }
+
+        return new OllirExprResult(temp, computation);
     }
 }
