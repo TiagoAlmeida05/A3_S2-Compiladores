@@ -36,6 +36,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     private final OllirExprGeneratorVisitor exprVisitor;
 
     private MethodSymbol currentMethod;
+    private JmmNode classNode = null;
 
     public OllirGeneratorVisitor(SymbolTable table) {
         this.table = table;
@@ -281,9 +282,6 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
     private String visitMethodDecl(JmmNode node, Void unused) {
 
-        // Build the lookup directly from the AST parameter nodes to correctly handle
-        // overloaded methods. getMethodDeclSignature can misidentify overloads by reading
-        // the "param" attribute of PARAM_LIST instead of iterating all PARAM children.
         String methodName = node.get("name");
         var paramListNodes = node.getChildren(PARAM_LIST);
         java.util.List<JmmNode> declaredParamNodes = paramListNodes.isEmpty()
@@ -294,7 +292,6 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
                 .map(p -> p.get("name"))
                 .toList();
 
-        // Primary: match by name + count + param names (handles all overload cases)
         var methodOpt = table.getMethods().stream()
                 .filter(m -> m.name().equals(methodName)
                         && m.parameters().size() == declaredParamCount)
@@ -305,14 +302,12 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
                     return declaredParamNames.isEmpty() || symParamNames.equals(declaredParamNames);
                 })
                 .findFirst();
-        // Fallback: match by name + count only
         if (methodOpt.isEmpty()) {
             methodOpt = table.getMethods().stream()
                     .filter(m -> m.name().equals(methodName)
                             && m.parameters().size() == declaredParamCount)
                     .findFirst();
         }
-        // Last resort: use getMethodDeclSignature
         if (methodOpt.isEmpty()) {
             Signature methodSig = TypeUtils.with(table).getMethodDeclSignature(node);
             methodOpt = table.getMethod(methodSig);
@@ -326,21 +321,22 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
         StringBuilder code = new StringBuilder(".method ");
 
-        code.append("public ");
+        var visibilityNodes = node.getChildren(VISIBILITY);
+        if (!visibilityNodes.isEmpty()) {
+            String visibility = visibilityNodes.getFirst().get("value");
+            code.append(visibility).append(" ");
+        }
 
         if (node.getObject("isStatic", Boolean.class)) {
             code.append("static ");
         }
 
-        // name
         var name = ollirTypes.sanitizeId(node.get("name"));
 
         if (name.equals("main")) {
             code.append("main(args.array.String).V {\n");
         } else {
             code.append(name);
-
-            // params
 
             var paramNodes = paramListNodes.isEmpty() ? java.util.Collections.<JmmNode>emptyList() : paramListNodes.get(0).getChildren(PARAM);
             String paramsCode = paramNodes.stream()
@@ -360,8 +356,6 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
             code.append(stmtsCode);
         }
 
-        // Append a fallback return if the method body doesn't end with a ret statement.
-        // Required by OLLIR even for unreachable code (e.g. after while(true)).
         if (!methodBodyEndsWithRet(stmts)) {
             String retOllirType = ollirTypes.toOllirType(currentMethod.returnType());
             if (retOllirType.equals(".V")) {
@@ -402,6 +396,7 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
     }
 
     private String visitClass(JmmNode node, Void unused) {
+        this.classNode = node;
         StringBuilder code = new StringBuilder();
         code.append(NL);
         code.append("public ").append(table.getClassName());
@@ -436,24 +431,48 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         return code.toString();
     }
 
+    private JmmNode findClassNode() {
+        return classNode;
+    }
+
     private String buildConstructor() {
 
         String superFqn = table.getSuperFullyQualifiedName();
+        String superName = (superFqn == null) ? "Object"
+                : (superFqn.contains(".") ? superFqn.substring(superFqn.lastIndexOf('.') + 1) : superFqn);
 
-        String superName;
-        if (superFqn == null) {
-            superName = "Object";
-        } else {
-            superName = superFqn.contains(".")
-                    ? superFqn.substring(superFqn.lastIndexOf('.') + 1)
-                    : superFqn;
+        StringBuilder code = new StringBuilder();
+        code.append(".construct ().V {\n");
+        code.append("    invokespecial(this.").append(superName).append(", \"<init>\").V;\n");
+
+        for (var field : table.getFields()) {
+            String fieldName = field.name();
+            String fieldOllirType = ollirTypes.toOllirType(field.type());
+
+            var classNode = findClassNode();
+            if (classNode == null) continue;
+
+            var varDeclOpt = classNode.getChildren(VAR_DECL).stream()
+                    .filter(vd -> vd.get("name").equals(fieldName) && vd.getNumChildren() >= 2)
+                    .findFirst();
+
+            if (varDeclOpt.isEmpty()) continue;
+
+            var initNode = varDeclOpt.get().getChild(1); // o inicializador (ex: NEW_OBJECT_EXPR)
+
+            ollirTypes.resetTemporaries();
+            var initResult = exprVisitor.visit(initNode);
+
+            code.append(initResult.getComputation());
+            code.append("putfield(this, ")
+                    .append(ollirTypes.sanitizeId(fieldName)).append(fieldOllirType)
+                    .append(", ")
+                    .append(initResult.getCode())
+                    .append(").V;\n");
         }
 
-        return """
-                .construct ().V {
-                    invokespecial(this.%s, "<init>").V;
-                }
-                """.formatted(superName);
+        code.append("}\n");
+        return code.toString();
     }
 
     private String visitProgram(JmmNode node, Void unused) {
