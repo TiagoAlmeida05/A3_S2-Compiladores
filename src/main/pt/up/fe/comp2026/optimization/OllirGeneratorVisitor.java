@@ -139,26 +139,43 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         var indexNode = node.getChild(1);
         var valueNode = node.getChild(2);
 
-        var varName = targetNode.get("name");
         var indexResult = exprVisitor.visit(indexNode);
         var valueResult = exprVisitor.visit(valueNode);
-
-        JmmType arrayType = lookupVarType(varName);
-        JmmType elemType = (arrayType instanceof JmmArrayType arr) ? arr.itemType() : TypeUtils.intType();
-
-        String arrayTypeStr = ollirTypes.toOllirType(arrayType);
-        String elemTypeStr = ollirTypes.toOllirType(elemType);
 
         var code = new StringBuilder();
         code.append(indexResult.getComputation());
         code.append(valueResult.getComputation());
 
-        code.append(ollirTypes.sanitizeId(varName)).append(arrayTypeStr);
-        code.append("[").append(indexResult.getCode()).append("]");
-        code.append(elemTypeStr);
-        code.append(SPACE).append(ASSIGN).append(elemTypeStr).append(SPACE);
-        code.append(valueResult.getCode());
-        code.append(END_STMT);
+        String arrayCode;
+        String elemTypeStr;
+
+        if (targetNode.getKind().toString().toUpperCase().contains("VAR_REF_EXPR")) {
+            var varName = targetNode.get("name");
+            JmmType arrayType = lookupVarType(varName);
+            JmmType elemType = (arrayType instanceof JmmArrayType arr)
+                    ? arr.itemType() : TypeUtils.intType();
+
+            String arrayTypeStr = ollirTypes.toOllirType(arrayType);
+            elemTypeStr = ollirTypes.toOllirType(elemType);
+            arrayCode = ollirTypes.sanitizeId(varName) + arrayTypeStr;
+        } else {
+            OllirExprResult innerResult = exprVisitor.visit(targetNode);
+            code.append(innerResult.getComputation());
+
+            JmmType intermediateType = types.getExprType(targetNode);
+            JmmType elemType = (intermediateType instanceof JmmArrayType arr)
+                    ? arr.itemType() : TypeUtils.intType();
+
+            elemTypeStr = ollirTypes.toOllirType(elemType);
+            arrayCode = innerResult.getCode();
+        }
+
+        code.append(arrayCode)
+                .append("[").append(indexResult.getCode()).append("]")
+                .append(elemTypeStr)
+                .append(SPACE).append(ASSIGN).append(elemTypeStr).append(SPACE)
+                .append(valueResult.getCode())
+                .append(END_STMT);
 
         return code.toString();
     }
