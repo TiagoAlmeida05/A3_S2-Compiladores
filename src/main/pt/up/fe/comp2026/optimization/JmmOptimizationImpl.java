@@ -157,7 +157,160 @@ public class JmmOptimizationImpl implements JmmOptimization {
     }
 
     private boolean propagateConstants(JmmNode node) {
-        return false;
+        boolean changed = false;
+        for (var methodDecl : findAllNodes(node, "METHOD_DECL")) {
+            changed |= propagateInMethod(methodDecl);
+        }
+        return changed;
+    }
+
+    private java.util.List<JmmNode> findAllNodes(JmmNode root, String kindFragment) {
+        var result = new java.util.ArrayList<JmmNode>();
+        findAllNodesHelper(root, kindFragment, result);
+        return result;
+    }
+
+    private void findAllNodesHelper(JmmNode node, String kindFragment, java.util.List<JmmNode> acc) {
+        if (node.getKind().toString().toUpperCase().contains(kindFragment)) acc.add(node);
+        for (var child : node.getChildren()) findAllNodesHelper(child, kindFragment, acc);
+    }
+
+    private boolean propagateInMethod(JmmNode methodDecl) {
+        var stmts = methodDecl.getChildren().stream()
+                .filter(c -> {
+                    String k = c.getKind().toString().toUpperCase();
+                    return k.contains("STMT") || k.contains("RETURN");
+                })
+                .toList();
+
+        var constants = new java.util.HashMap<String, JmmNode>();
+        boolean changed = false;
+
+        for (var stmt : stmts) {
+            changed |= propagateInStmt(stmt, constants);
+        }
+        return changed;
+    }
+
+    private boolean propagateInStmt(JmmNode stmt, java.util.Map<String, JmmNode> constants) {
+        boolean changed = false;
+        String kind = stmt.getKind().toString().toUpperCase();
+
+        if (kind.contains("ASSIGN_STMT")) {
+            String varName = stmt.get("var");
+            var rhs = stmt.getChild(0);
+            changed |= propagateInExpr(rhs, constants);
+            if (isLiteral(stmt.getChild(0))) {
+                constants.put(varName, stmt.getChild(0));
+            } else {
+                constants.remove(varName);
+            }
+
+        } else if (kind.contains("IF_ELSE_STMT")) {
+            changed |= propagateInExpr(stmt.getChild(0), constants);
+
+            var killedInAnyBranch = collectAssignedVars(stmt);
+
+            if (stmt.getNumChildren() > 1) {
+                var thenMap = new java.util.HashMap<>(constants);
+                for (var v : killedInAnyBranch) thenMap.remove(v);
+                changed |= propagateInBlock(stmt.getChild(1), thenMap);
+            }
+
+            if (stmt.getNumChildren() > 2) {
+                var elseMap = new java.util.HashMap<>(constants);
+                for (var v : killedInAnyBranch) elseMap.remove(v);
+                changed |= propagateInBlock(stmt.getChild(2), elseMap);
+            }
+
+            for (var v : killedInAnyBranch) constants.remove(v);
+
+        } else if (kind.contains("WHILE_STMT")) {
+            var killed = collectAssignedVars(stmt);
+            for (var v : killed) constants.remove(v);
+            changed |= propagateInExpr(stmt.getChild(0), constants);
+            if (stmt.getNumChildren() > 1) {
+                var bodyMap = new java.util.HashMap<>(constants);
+                changed |= propagateInBlock(stmt.getChild(1), bodyMap);
+            }
+
+        } else if (kind.contains("BLOCK_STMT")) {
+            for (var child : stmt.getChildren()) {
+                changed |= propagateInStmt(child, constants);
+            }
+        } else {
+            changed |= propagateInChildren(stmt, constants);
+        }
+
+        return changed;
+    }
+
+    private boolean propagateInBlock(JmmNode block, java.util.Map<String, JmmNode> constants) {
+        boolean changed = false;
+        String kind = block.getKind().toString().toUpperCase();
+        if (kind.contains("BLOCK_STMT")) {
+            for (var child : block.getChildren()) {
+                changed |= propagateInStmt(child, constants);
+            }
+        } else {
+            changed |= propagateInStmt(block, constants);
+        }
+        return changed;
+    }
+
+    private boolean propagateInChildren(JmmNode node, java.util.Map<String, JmmNode> constants) {
+        boolean changed = false;
+        for (int i = 0; i < node.getNumChildren(); i++) {
+            changed |= propagateInExpr(node.getChild(i), constants);
+        }
+        return changed;
+    }
+
+    private boolean propagateInExpr(JmmNode expr, java.util.Map<String, JmmNode> constants) {
+        boolean changed = false;
+
+        if (expr.getKind().toString().toUpperCase().contains("METHOD_CALL_EXPR") ||
+                expr.getKind().toString().toUpperCase().contains("IMPLICIT_THIS_CALL_EXPR")) {
+            for (int i = 0; i < expr.getNumChildren(); i++) {
+                changed |= propagateInExpr(expr.getChild(i), constants);
+            }
+            return changed;
+        }
+
+        for (int i = 0; i < expr.getNumChildren(); i++) {
+            changed |= propagateInExpr(expr.getChild(i), constants);
+        }
+
+        if (expr.getKind().toString().toUpperCase().contains("VAR_REF_EXPR")) {
+            String name = expr.get("name");
+            if (constants.containsKey(name)) {
+                var litNode = constants.get(name).copy();
+                expr.replace(litNode);
+                return true;
+            }
+        }
+
+        return changed;
+    }
+
+    private boolean isLiteral(JmmNode node) {
+        String k = node.getKind().toString().toUpperCase();
+        return k.contains("INTEGER_LITERAL") || k.contains("BOOLEAN_LITERAL");
+    }
+
+    private java.util.Set<String> collectAssignedVars(JmmNode node) {
+        var result = new java.util.HashSet<String>();
+        collectAssignedVarsHelper(node, result);
+        return result;
+    }
+
+    private void collectAssignedVarsHelper(JmmNode node, java.util.Set<String> acc) {
+        if (node.getKind().toString().toUpperCase().contains("ASSIGN_STMT")) {
+            acc.add(node.get("var"));
+        }
+        for (var child : node.getChildren()) {
+            collectAssignedVarsHelper(child, acc);
+        }
     }
 
     private void eliminateBranches(JmmNode node) {
