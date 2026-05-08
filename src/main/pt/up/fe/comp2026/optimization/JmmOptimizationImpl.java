@@ -3,6 +3,7 @@ package pt.up.fe.comp2026.optimization;
 import org.specs.comp.ollir.*;
 import org.specs.comp.ollir.inst.*;
 import pt.up.fe.comp.jmm.analysis.JmmSemanticsResult;
+import pt.up.fe.comp.jmm.analysis.table.SymbolTable;
 import pt.up.fe.comp.jmm.ast.JmmNode;
 import pt.up.fe.comp.jmm.ollir.JmmOptimization;
 import pt.up.fe.comp.jmm.ollir.OllirResult;
@@ -11,6 +12,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class JmmOptimizationImpl implements JmmOptimization {
+
+    private SymbolTable symbolTable;
 
     @Override
     public OllirResult toOllir(JmmSemanticsResult semanticsResult) {
@@ -24,14 +27,97 @@ public class JmmOptimizationImpl implements JmmOptimization {
         if (!Boolean.parseBoolean(semanticsResult.config().getOrDefault("optimize", "false")))
             return semanticsResult;
 
+        this.symbolTable = semanticsResult.getSymbolTable();
+
         var root = semanticsResult.getRootNode();
         boolean changed = true;
         while (changed) {
             changed = foldConstants(root);
             changed |= propagateConstants(root);
             eliminateBranches(root);
+            changed |= eliminateDeadCode(root);
         }
         return semanticsResult;
+    }
+
+    private boolean eliminateDeadCode(JmmNode root) {
+        boolean changed = false;
+        for (var methodDecl : findAllNodes(root, "METHOD_DECL"))
+            changed |= eliminateDeadCodeInMethod(methodDecl);
+        return changed;
+    }
+
+    private boolean eliminateDeadCodeInMethod(JmmNode methodDecl) {
+        var stmts = methodDecl.getChildren().stream()
+                .filter(c -> {
+                    String k = c.getKind().toString().toUpperCase();
+                    return k.contains("STMT") || k.contains("RETURN");
+                })
+                .toList();
+
+        Set<String> liveVars = new HashSet<>();
+        collectLiveVarsFromStmts(stmts, liveVars);
+
+        boolean changed = false;
+        for (int i = stmts.size() - 1; i >= 0; i--) {
+            var stmt = stmts.get(i);
+            String kind = stmt.getKind().toString().toUpperCase();
+            if (!kind.contains("ASSIGN_STMT")) continue;
+
+            String varName = stmt.get("var");
+            if (isFieldAssign(varName, methodDecl)) continue;
+            if (rhsHasSideEffects(stmt.getChild(0))) continue;
+
+            if (!liveVars.contains(varName)) {
+                stmt.getParent().removeChild(stmt);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private void collectLiveVarsFromStmts(List<JmmNode> stmts, Set<String> live) {
+        for (var stmt : stmts)
+            collectLiveVarsFromNode(stmt, live);
+    }
+
+    private void collectLiveVarsFromNode(JmmNode node, Set<String> live) {
+        String kind = node.getKind().toString().toUpperCase();
+
+        if (kind.contains("VAR_REF_EXPR")) {
+            live.add(node.get("name"));
+            return;
+        }
+
+        if (kind.contains("ASSIGN_STMT")) {
+            collectLiveVarsFromNode(node.getChild(0), live);
+            return;
+        }
+
+        for (var child : node.getChildren())
+            collectLiveVarsFromNode(child, live);
+    }
+
+    private boolean isFieldAssign(String varName, JmmNode methodDecl) {
+        if (symbolTable == null) return false;
+        String methodName = methodDecl.get("name");
+        var methodOpt = symbolTable.getMethods().stream()
+                .filter(m -> m.name().equals(methodName))
+                .findFirst();
+        if (methodOpt.isEmpty()) return false;
+        var method = methodOpt.get();
+        if (method.getLocalVariable(varName).isPresent()) return false;
+        if (method.getParameter(varName).isPresent()) return false;
+        return symbolTable.getField(varName).isPresent();
+    }
+
+    private boolean rhsHasSideEffects(JmmNode expr) {
+        String kind = expr.getKind().toString().toUpperCase();
+        if (kind.contains("METHOD_CALL") || kind.contains("CALL_EXPR") ||
+                kind.contains("NEW_OBJECT") || kind.contains("NEW_ARRAY")) return true;
+        for (var child : expr.getChildren())
+            if (rhsHasSideEffects(child)) return true;
+        return false;
     }
 
     private boolean foldConstants(JmmNode node) {
