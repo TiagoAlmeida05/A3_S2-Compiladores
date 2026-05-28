@@ -1,22 +1,20 @@
 package pt.up.fe.comp2026.backend;
 
 import org.specs.comp.ollir.*;
-import org.specs.comp.ollir.inst.*;
+import org.specs.comp.ollir.inst.AssignInstruction;
+import org.specs.comp.ollir.inst.BinaryOpInstruction;
+import org.specs.comp.ollir.inst.ReturnInstruction;
+import org.specs.comp.ollir.inst.SingleOpInstruction;
 import org.specs.comp.ollir.tree.TreeNode;
-import org.specs.comp.ollir.type.ArrayType;
-import org.specs.comp.ollir.type.BuiltinKind;
-import org.specs.comp.ollir.type.BuiltinType;
 import pt.up.fe.comp.jmm.ollir.OllirResult;
 import pt.up.fe.comp.jmm.report.Report;
 import pt.up.fe.comp2026.optimization.OptUtils;
-import pt.up.fe.specs.util.SpecsCheck;
 import pt.up.fe.specs.util.classmap.FunctionClassMap;
 import pt.up.fe.specs.util.exceptions.NotImplementedException;
 import pt.up.fe.specs.util.utilities.StringLines;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -93,22 +91,29 @@ public class JasminGenerator {
 
 
     private String generateClassUnit(ClassUnit classUnit) {
-
         var code = new StringBuilder();
 
-        // generate class name
         var nameWithPackage = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
-        code.append(".class ").append(nameWithPackage).append(NL).append(NL);
+        code.append(".class public ").append(nameWithPackage).append(NL).append(NL);
 
-        // TODO: When you support 'extends', this must be updated
-        var fullSuperClass =  "java/lang/Object";
+        var fullSuperClass = "java/lang/Object";
+        code.append(".super ").append(fullSuperClass).append(NL).append(NL); // <- NL extra aqui
 
-        code.append(".super ").append(fullSuperClass).append(NL);
+        for (var field : ollirResult.getOllirClass().getFields()) {
+            var accessModifier = types.getModifier(field.getFieldAccessModifier());
+            var fieldName = field.getFieldName().trim();
+            var fieldType = types.getTypeDescriptor(field.getFieldType()).trim();
+            code.append(".field ").append(accessModifier).append(fieldName)
+                    .append(" ").append(fieldType).append(NL);
+        }
 
-        // generate a single constructor method
+        code.append(NL);
+
         var defaultConstructor = """
                 ;default constructor
                 .method public <init>()V
+                    .limit stack 1
+                    .limit locals 1
                     aload_0
                     invokespecial %s/<init>()V
                     return
@@ -116,16 +121,10 @@ public class JasminGenerator {
                 """.formatted(fullSuperClass);
         code.append(defaultConstructor);
 
-        // generate code for all other methods
         for (var method : ollirResult.getOllirClass().getMethods()) {
-
-            // Ignore constructor, since there is always one constructor
-            // that receives no arguments, and has been already added
-            // previously
             if (method.isConstructMethod()) {
                 continue;
             }
-
             code.append(apply(method));
         }
 
