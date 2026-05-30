@@ -2,6 +2,7 @@ package pt.up.fe.comp2026.backend;
 
 import org.specs.comp.ollir.AccessModifier;
 import org.specs.comp.ollir.Descriptor;
+import org.specs.comp.ollir.Element;
 import org.specs.comp.ollir.type.ArrayType;
 import org.specs.comp.ollir.type.BuiltinType;
 import org.specs.comp.ollir.type.ClassType;
@@ -23,19 +24,12 @@ public class JasminUtils {
     public JasminUtils(OllirResult ollirResult) {
         this.ollirResult = ollirResult;
         this.importer = Importer.fromThisClassPath();
-        // Build imports table
         fullClassnames = new HashMap<>();
 
-        // Predefined classnames
         fullClassnames.put("this", ollirResult.getOllirClass().getClassName());
-        // This will be get caught as STRING OLLIR element type.
-        // And classes cannot be named String, since it is an OLLIR reserved keyword
-        //imports.put("String", "java/lang/String");
 
         for (var fullImport : ollirResult.getOllirClass().getImports()) {
             var splitted = fullImport.split("\\.");
-
-            // Last element will be the key
             var key = splitted[splitted.length - 1];
             fullClassnames.put(key, fullImport.replace('.', '/'));
         }
@@ -43,8 +37,15 @@ public class JasminUtils {
 
 
     public String getTypePrefix(Type type) {
-        System.out.println("[TODO] JasminUtils.getTypePrefix(): Assumes it is always int, needs to be expanded");
-        return "i";
+        if (type instanceof ArrayType) return "a";
+        if (type instanceof ClassType) return "a";
+        if (type instanceof BuiltinType builtinType) {
+            return switch (builtinType.getKind()) {
+                case INT32, BOOLEAN -> "i";
+                default -> throw new RuntimeException("Not implemented for " + builtinType.getKind());
+            };
+        }
+        throw new RuntimeException("Not implemented for type: " + type);
     }
 
     public String getTypeDescriptor(Type type) {
@@ -84,16 +85,37 @@ public class JasminUtils {
     public String getLoad(Descriptor reg) {
         var prefix = getTypePrefix(reg.getVarType());
         var value = reg.getVirtualReg();
-
         return prefix + "load " + value;
     }
 
     public String getStore(Descriptor reg) {
         var prefix = getTypePrefix(reg.getVarType());
         var value = reg.getVirtualReg();
-
         return prefix + "store " + value;
     }
 
+    public String getClassNameFromElement(Element element) {
+        var type = element.getType();
+        if (type instanceof ClassType classType) {
+            var name = classType.getName();
+            return fullClassnames.getOrDefault(name, name.replace('.', '/'));
+        }
+        if (type instanceof ArrayType) {
+            return getTypeDescriptor(type);
+        }
+        throw new RuntimeException("Cannot get class name from element of type: " + type);
+    }
 
+    /**
+     * Resolves a simple class name (e.g. "ArrayAsArgument", "io") to its
+     * fully qualified slash-separated form (e.g. "pt/up/fe/.../ArrayAsArgument").
+     * Falls back to the name itself if not found in imports.
+     */
+    public String resolveClassName(String name) {
+        // "this" maps to the current class
+        if (name.equals("this")) {
+            return ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
+        }
+        return fullClassnames.getOrDefault(name, name.replace('.', '/'));
+    }
 }

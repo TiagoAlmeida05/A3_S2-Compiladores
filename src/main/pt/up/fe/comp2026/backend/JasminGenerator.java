@@ -1,11 +1,9 @@
 package pt.up.fe.comp2026.backend;
 
 import org.specs.comp.ollir.*;
-import org.specs.comp.ollir.inst.AssignInstruction;
-import org.specs.comp.ollir.inst.BinaryOpInstruction;
-import org.specs.comp.ollir.inst.ReturnInstruction;
-import org.specs.comp.ollir.inst.SingleOpInstruction;
+import org.specs.comp.ollir.inst.*;
 import org.specs.comp.ollir.tree.TreeNode;
+import org.specs.comp.ollir.type.ArrayType;
 import pt.up.fe.comp.jmm.ollir.OllirResult;
 import pt.up.fe.comp.jmm.report.Report;
 import pt.up.fe.comp2026.optimization.OptUtils;
@@ -61,6 +59,9 @@ public class JasminGenerator {
         generators.put(Operand.class, this::generateOperand);
         generators.put(BinaryOpInstruction.class, this::generateBinaryOp);
         generators.put(ReturnInstruction.class, this::generateReturn);
+        generators.put(NewInstruction.class, this::generateNew);
+        generators.put(ArrayLengthInstruction.class, this::generateArrayLength);
+        generators.put(CallInstruction.class, this::generateCall);
     }
 
 
@@ -266,4 +267,43 @@ public class JasminGenerator {
         return code.toString();
     }
 
+    private String generateNew(NewInstruction newInst) {
+        var code = new StringBuilder();
+        var type = newInst.getReturnType();
+
+        if (type instanceof ArrayType) {
+            // O primeiro operando é o tamanho — pode ser literal ou variável
+            var sizeOperand = newInst.getOperands().get(0);
+            if (sizeOperand instanceof LiteralElement literal) {
+                code.append("ldc ").append(literal.getLiteral()).append(NL);
+            } else {
+                var reg = currentMethod.getVarTable().get(((Operand) sizeOperand).getName());
+                code.append(types.getLoad(reg)).append(NL);
+            }
+            code.append("newarray int").append(NL);
+        } else {
+            var className = types.getTypeDescriptor(type)
+                    .replace("L", "").replace(";", "");
+            code.append("new ").append(className).append(NL);
+            code.append("dup").append(NL);
+        }
+
+        return code.toString();
+    }
+
+    private String generateArrayLength(ArrayLengthInstruction inst) {
+        var code = new StringBuilder();
+        // Carregar o array para a stack
+        code.append(apply(inst.getOperands().get(0)));
+        code.append("arraylength").append(NL);
+        return code.toString();
+    }
+
+    private String generateCall(CallInstruction call) {
+        System.out.println("=== CallInstruction methods ===");
+        for (var m : call.getClass().getMethods()) {
+            System.out.println(m.getReturnType().getSimpleName() + " " + m.getName() + "()");
+        }
+        return "";
+    }
 }
