@@ -193,6 +193,23 @@ public class JasminGenerator {
 
             var operand = (Operand) lhs;
             var reg = currentMethod.getVarTable().get(operand.getName());
+
+            // If RHS is a call whose real return type is an array/object,
+            // the var table may say 'i' (due to wrong OLLIR type annotation).
+            // Override to 'a' in that case.
+            if (assign.getRhs() instanceof CallInstruction rhsCall) {
+                var realDesc = getRealReturnDescriptor(
+                        ((LiteralElement) rhsCall.getMethodName()).getLiteral().replace("\"", ""),
+                        rhsCall.getArguments().stream()
+                                .map(a -> types.getTypeDescriptor(a.getType()))
+                                .collect(Collectors.joining()),
+                        rhsCall.getReturnType());
+                if (realDesc.startsWith("[") || realDesc.startsWith("L")) {
+                    code.append("astore ").append(reg.getVirtualReg()).append(NL);
+                    return code.toString();
+                }
+            }
+
             code.append(types.getStore(reg)).append(NL);
 
             return code.toString();
@@ -271,10 +288,14 @@ public class JasminGenerator {
         var code = new StringBuilder();
 
         var returnType = returnInst.getReturnType();
-        var typePrefix = types.getTypePrefix(returnType);
+
+        if (returnType instanceof BuiltinType bt && bt.getKind() == BuiltinKind.VOID) {
+            code.append("return").append(NL);
+            return code.toString();
+        }
 
         returnInst.getOperand().ifPresent(op -> code.append(apply(op)));
-
+        var typePrefix = types.getTypePrefix(returnType);
         code.append(typePrefix).append("return").append(NL);
         return code.toString();
     }
@@ -302,21 +323,30 @@ public class JasminGenerator {
 
     private String generateArrayLength(ArrayLengthInstruction inst) {
         var code = new StringBuilder();
-        code.append(apply(inst.getOperands().get(0)));
+        var operand = inst.getOperands().get(0);
+        // Always load as reference (aload) since OLLIR may wrongly type the var as i32
+        if (operand instanceof Operand op && !op.getName().equals("this")) {
+            var reg = currentMethod.getVarTable().get(op.getName());
+            if (reg != null) {
+                int n = reg.getVirtualReg();
+                code.append("aload").append(n < 4 ? "_" : " ").append(n).append(NL);
+                code.append("arraylength").append(NL);
+                return code.toString();
+            }
+        }
+        code.append(apply(operand));
         code.append("arraylength").append(NL);
         return code.toString();
     }
 
     private String generateCall(CallInstruction call) {
-        // Determine invocation type from the instruction's string representation.
-        // The OLLIR text always starts with the invocation type keyword.
         var callStr = call.toString().trim().toLowerCase();
 
-        if (callStr.startsWith("invokevirtual")) {
+        if (callStr.contains("invokevirtual")) {
             return getVirtualCall(call);
-        } else if (callStr.startsWith("invokestatic")) {
+        } else if (callStr.contains("invokestatic")) {
             return getStaticCall(call);
-        } else if (callStr.startsWith("invokespecial")) {
+        } else if (callStr.contains("invokespecial")) {
             return getSpecialCall(call);
         } else {
             throw new NotImplementedException("Unknown call type in: " + call);
@@ -326,11 +356,19 @@ public class JasminGenerator {
     private String getVirtualCall(CallInstruction call) {
         var code = new StringBuilder();
 
-        var caller = (Operand) call.getCaller();
+        var caller = call.getCaller();
         var callerType = caller.getType();
         String className;
         if (callerType instanceof ClassType ct) {
-            className = types.resolveClassName(ct.getName());
+            var resolved = types.resolveClassName(ct.getName());
+            // If unresolved (same as input, no slashes from package), check if it's the current class
+            var currentClassName = ollirResult.getOllirClass().getClassName();
+            var currentFQN = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
+            if (resolved.equals(ct.getName()) && (ct.getName().equals(currentClassName) || ct.getName().equals(currentFQN))) {
+                className = currentFQN;
+            } else {
+                className = resolved;
+            }
         } else {
             className = types.resolveClassName("this");
         }
@@ -347,13 +385,29 @@ public class JasminGenerator {
         var argsDescriptor = call.getArguments().stream()
                 .map(a -> types.getTypeDescriptor(a.getType()))
                 .collect(Collectors.joining());
-        var returnDescriptor = types.getTypeDescriptor(call.getReturnType());
+
+        // OLLIR sometimes annotates the return type wrongly (e.g. array method as i32).
+        // Look up the real return type from the class definition when possible.
+        var returnDescriptor = getRealReturnDescriptor(methodName, argsDescriptor, call.getReturnType());
 
         code.append("invokevirtual ").append(className).append("/")
                 .append(methodName).append("(").append(argsDescriptor).append(")")
                 .append(returnDescriptor).append(NL);
 
         return code.toString();
+    }
+
+    private String getRealReturnDescriptor(String methodName, String argsDescriptor, Type ollirReturnType) {
+        for (var method : ollirResult.getOllirClass().getMethods()) {
+            if (!method.getMethodName().equals(methodName)) continue;
+            var methodArgsDescriptor = method.getParams().stream()
+                    .map(p -> types.getTypeDescriptor(p.getType()))
+                    .collect(Collectors.joining());
+            if (!methodArgsDescriptor.equals(argsDescriptor)) continue;
+            // Use the actual return type from the method definition
+            return types.getTypeDescriptor(method.getReturnType());
+        }
+        return types.getTypeDescriptor(ollirReturnType);
     }
 
     private String getStaticCall(CallInstruction call) {
