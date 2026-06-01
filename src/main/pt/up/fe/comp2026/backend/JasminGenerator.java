@@ -62,6 +62,8 @@ public class JasminGenerator {
         generators.put(NewInstruction.class, this::generateNew);
         generators.put(ArrayLengthInstruction.class, this::generateArrayLength);
         generators.put(CallInstruction.class, this::generateCall);
+        generators.put(PutFieldInstruction.class, this::generatePutField);
+        generators.put(GetFieldInstruction.class, this::generateGetField);
     }
 
     private String apply(TreeNode node) {
@@ -187,9 +189,7 @@ public class JasminGenerator {
                 return code.toString();
             }
 
-            // --- RHS é um NewInstruction (ex: tmp0 := new(array, size)) ---
-            // IMPORTANTE: este bloco tem de vir ANTES do bloco CallInstruction,
-            // porque NewInstruction pode ser subclasse de CallInstruction no OLLIR.
+            // --- RHS é um NewInstruction ---
             if (assign.getRhs() instanceof NewInstruction) {
                 code.append(apply(assign.getRhs()));
                 var operand = (Operand) lhs;
@@ -209,7 +209,7 @@ public class JasminGenerator {
                 try {
                     methodName = ((LiteralElement) rhsCall.getMethodName()).getLiteral().replace("\"", "");
                 } catch (Exception e) {
-                    // getMethodName() lançou exceção — é arraylength ou similar sem nome
+                    // arraylength ou similar sem nome
                 }
 
                 if (methodName == null) {
@@ -254,12 +254,28 @@ public class JasminGenerator {
                 var operand = (Operand) lhs;
                 var reg = currentMethod.getVarTable().get(operand.getName());
 
-                var realDesc = getRealReturnDescriptor(
-                        methodName,
-                        rhsCall.getArguments().stream()
-                                .map(a -> types.getTypeDescriptor(a.getType()))
-                                .collect(Collectors.joining()),
-                        rhsCall.getReturnType());
+                // Tentar obter o return descriptor real via reflection (para métodos externos)
+                String realDesc = null;
+                if (rhsCall.getCaller() instanceof Operand callerOp) {
+                    var callerClassName = types.resolveClassName(callerOp.getName());
+                    realDesc = types.resolveReturnDescriptorViaReflection(
+                            callerClassName, methodName, rhsCall.getArguments().size());
+                }
+
+                // Fallback: método local ou inferência do OLLIR
+                if (realDesc == null) {
+                    realDesc = getRealReturnDescriptor(
+                            methodName,
+                            rhsCall.getArguments().stream()
+                                    .map(a -> types.getTypeDescriptor(a.getType()))
+                                    .collect(Collectors.joining()),
+                            rhsCall.getReturnType());
+                }
+
+                if (realDesc.equals("V")) {
+                    return code.toString();
+                }
+
                 if (realDesc.startsWith("[") || realDesc.startsWith("L")) {
                     code.append("astore ").append(reg.getVirtualReg()).append(NL);
                     return code.toString();
@@ -268,8 +284,7 @@ public class JasminGenerator {
                 code.append(types.getStore(reg)).append(NL);
                 return code.toString();
             }
-
-            // --- Atribuição normal (ex: a := tmp0) ---
+            
             code.append(apply(assign.getRhs()));
 
             var operand = (Operand) lhs;
@@ -457,11 +472,26 @@ public class JasminGenerator {
             code.append(apply(arg));
         }
 
-        var argsDescriptor = call.getArguments().stream()
-                .map(a -> types.getTypeDescriptor(a.getType()))
-                .collect(Collectors.joining());
+        var args = call.getArguments();
+        var resolvedParams = types.resolveParamDescriptorsViaReflection(
+                className, methodName, args.size());
+
+        String argsDescriptor;
+        if (resolvedParams != null) {
+            argsDescriptor = String.join("", resolvedParams);
+        } else {
+            argsDescriptor = args.stream()
+                    .map(a -> types.getTypeDescriptor(a.getType()))
+                    .collect(Collectors.joining());
+        }
 
         var returnDescriptor = getRealReturnDescriptor(methodName, argsDescriptor, call.getReturnType());
+
+        if (returnDescriptor.equals(types.getTypeDescriptor(call.getReturnType()))) {
+            var resolvedReturn = types.resolveReturnDescriptorViaReflection(
+                    className, methodName, call.getArguments().size());
+            if (resolvedReturn != null) returnDescriptor = resolvedReturn;
+        }
 
         code.append("invokevirtual ").append(className).append("/")
                 .append(methodName).append("(").append(argsDescriptor).append(")")
@@ -496,7 +526,11 @@ public class JasminGenerator {
         var argsDescriptor = call.getArguments().stream()
                 .map(a -> types.getTypeDescriptor(a.getType()))
                 .collect(Collectors.joining());
-        var returnDescriptor = types.getTypeDescriptor(call.getReturnType());
+        var resolvedReturn = types.resolveReturnDescriptorViaReflection(
+                className, methodName, call.getArguments().size());
+        var returnDescriptor = resolvedReturn != null
+                ? resolvedReturn
+                : types.getTypeDescriptor(call.getReturnType());
 
         code.append("invokestatic ").append(className).append("/")
                 .append(methodName).append("(").append(argsDescriptor).append(")")
@@ -546,5 +580,44 @@ public class JasminGenerator {
 
     private String loadRef(int reg) {
         return "aload" + (reg < 4 ? "_" : " ") + reg;
+    }
+
+    private String generatePutField(PutFieldInstruction putField) {
+        var code = new StringBuilder();
+
+        var object = (Operand) putField.getObject();
+        code.append(apply(object));
+
+        var value = putField.getValue();
+        code.append(apply(value));
+
+        var ownerClass = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
+
+        var field = putField.getField();
+        var fieldName = field.getName();
+        var fieldDescriptor = types.getTypeDescriptor(field.getType());
+
+        code.append("putfield ").append(ownerClass).append("/")
+                .append(fieldName).append(" ").append(fieldDescriptor).append(NL);
+
+        return code.toString();
+    }
+
+    private String generateGetField(GetFieldInstruction getField) {
+        var code = new StringBuilder();
+
+        var object = (Operand) getField.getObject();
+        code.append(apply(object));
+
+        var ownerClass = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
+
+        var field = getField.getField();
+        var fieldName = field.getName();
+        var fieldDescriptor = types.getTypeDescriptor(field.getType());
+
+        code.append("getfield ").append(ownerClass).append("/")
+                .append(fieldName).append(" ").append(fieldDescriptor).append(NL);
+
+        return code.toString();
     }
 }
