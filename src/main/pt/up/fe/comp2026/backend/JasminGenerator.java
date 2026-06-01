@@ -147,7 +147,6 @@ public class JasminGenerator {
                     .collect(Collectors.joining(NL + TAB, TAB, NL));
             bodyCode.append(instCode);
 
-            // Pop unused return value when a call result is not being assigned
             if (inst instanceof CallInstruction call && !isInsideAssignment) {
                 if (!isVoidType(call.getReturnType())) {
                     bodyCode.append(TAB).append("pop").append(NL);
@@ -171,35 +170,89 @@ public class JasminGenerator {
             var code = new StringBuilder();
             var lhs = assign.getDest();
 
-            // Array element store: dest is ArrayOperand (e.g. a[i] = value)
+            // --- LHS é um array store (ex: a[i] = valor) ---
             if (lhs instanceof ArrayOperand arrayOp) {
-                // Load array reference
                 var arrayReg = currentMethod.getVarTable().get(arrayOp.getName()).getVirtualReg();
                 code.append(loadRef(arrayReg)).append(NL);
 
-                // Load index
                 var indexOp = arrayOp.getIndexOperands().get(0);
                 code.append(apply(indexOp));
 
-                // Load value (rhs)
                 code.append(apply(assign.getRhs()));
 
                 code.append("iastore").append(NL);
                 return code.toString();
             }
 
-            // Normal assignment: generate RHS first
-            code.append(apply(assign.getRhs()));
+            // --- RHS é um NewInstruction (ex: tmp0 := new(array, size)) ---
+            // IMPORTANTE: este bloco tem de vir ANTES do bloco CallInstruction,
+            // porque NewInstruction pode ser subclasse de CallInstruction no OLLIR.
+            if (assign.getRhs() instanceof NewInstruction) {
+                code.append(apply(assign.getRhs()));
+                var operand = (Operand) lhs;
+                var reg = currentMethod.getVarTable().get(operand.getName());
+                var lhsType = reg.getVarType();
+                if (lhsType instanceof ArrayType || lhsType instanceof ClassType) {
+                    code.append("astore ").append(reg.getVirtualReg()).append(NL);
+                } else {
+                    code.append(types.getStore(reg)).append(NL);
+                }
+                return code.toString();
+            }
 
-            var operand = (Operand) lhs;
-            var reg = currentMethod.getVarTable().get(operand.getName());
-
-            // If RHS is a call whose real return type is an array/object,
-            // the var table may say 'i' (due to wrong OLLIR type annotation).
-            // Override to 'a' in that case.
+            // --- RHS é uma CallInstruction ---
             if (assign.getRhs() instanceof CallInstruction rhsCall) {
+                String methodName = null;
+                try {
+                    methodName = ((LiteralElement) rhsCall.getMethodName()).getLiteral().replace("\"", "");
+                } catch (Exception e) {
+                    // getMethodName() lançou exceção — é arraylength ou similar sem nome
+                }
+
+                if (methodName == null) {
+                    // arraylength via CallInstruction
+                    var operand2 = (Operand) lhs;
+                    var reg2 = currentMethod.getVarTable().get(operand2.getName());
+                    var caller = rhsCall.getCaller();
+                    boolean callerHandled = false;
+                    if (caller instanceof Operand callerOp) {
+                        var callerName = callerOp.getName();
+                        if (!callerName.equals("array")) {
+                            var callerReg = currentMethod.getVarTable().get(callerName);
+                            if (callerReg != null) {
+                                code.append(loadRef(callerReg.getVirtualReg())).append(NL);
+                                callerHandled = true;
+                            }
+                        }
+                    }
+                    if (!callerHandled) {
+                        var args = rhsCall.getArguments();
+                        if (!args.isEmpty() && args.get(0) instanceof Operand argOp) {
+                            var argReg = currentMethod.getVarTable().get(argOp.getName());
+                            if (argReg != null) {
+                                code.append(loadRef(argReg.getVirtualReg())).append(NL);
+                            } else {
+                                code.append(apply(args.get(0)));
+                            }
+                        } else if (!args.isEmpty()) {
+                            code.append(apply(args.get(0)));
+                        } else {
+                            code.append(apply(caller));
+                        }
+                    }
+                    code.append("arraylength").append(NL);
+                    code.append("istore ").append(reg2.getVirtualReg()).append(NL);
+                    return code.toString();
+                }
+
+                // Call normal com nome de método
+                code.append(apply(assign.getRhs()));
+
+                var operand = (Operand) lhs;
+                var reg = currentMethod.getVarTable().get(operand.getName());
+
                 var realDesc = getRealReturnDescriptor(
-                        ((LiteralElement) rhsCall.getMethodName()).getLiteral().replace("\"", ""),
+                        methodName,
                         rhsCall.getArguments().stream()
                                 .map(a -> types.getTypeDescriptor(a.getType()))
                                 .collect(Collectors.joining()),
@@ -208,8 +261,16 @@ public class JasminGenerator {
                     code.append("astore ").append(reg.getVirtualReg()).append(NL);
                     return code.toString();
                 }
+
+                code.append(types.getStore(reg)).append(NL);
+                return code.toString();
             }
 
+            // --- Atribuição normal (ex: a := tmp0) ---
+            code.append(apply(assign.getRhs()));
+
+            var operand = (Operand) lhs;
+            var reg = currentMethod.getVarTable().get(operand.getName());
             code.append(types.getStore(reg)).append(NL);
 
             return code.toString();
@@ -305,11 +366,26 @@ public class JasminGenerator {
         var type = newInst.getReturnType();
 
         if (type instanceof ArrayType) {
-            // Operands: [array_type_token, size]
-            // Index 0 is the "array" keyword token, size is at index 1
             var operands = newInst.getOperands();
-            var sizeOperand = operands.size() > 1 ? operands.get(1) : operands.get(0);
-            code.append(apply(sizeOperand));
+            var sizeOperand = operands.stream()
+                    .filter(op -> !(op instanceof Operand o && o.getName().equals("array")))
+                    .findFirst()
+                    .orElse(operands.get(operands.size() - 1));
+
+            // Forçar iload para o tamanho — o tipo na var table pode estar errado (array em vez de int)
+            if (sizeOperand instanceof Operand op && !op.getName().equals("array")) {
+                var reg = currentMethod.getVarTable().get(op.getName());
+                if (reg != null) {
+                    int n = reg.getVirtualReg();
+                    code.append("iload").append(n < 4 ? "_" : " ").append(n).append(NL);
+                } else {
+                    code.append(apply(sizeOperand));
+                }
+            } else {
+                // LiteralElement ou outro — usa apply normalmente
+                code.append(apply(sizeOperand));
+            }
+
             code.append("newarray int").append(NL);
         } else {
             var className = types.getTypeDescriptor(type)
@@ -324,7 +400,6 @@ public class JasminGenerator {
     private String generateArrayLength(ArrayLengthInstruction inst) {
         var code = new StringBuilder();
         var operand = inst.getOperands().get(0);
-        // Always load as reference (aload) since OLLIR may wrongly type the var as i32
         if (operand instanceof Operand op && !op.getName().equals("this")) {
             var reg = currentMethod.getVarTable().get(op.getName());
             if (reg != null) {
@@ -361,7 +436,6 @@ public class JasminGenerator {
         String className;
         if (callerType instanceof ClassType ct) {
             var resolved = types.resolveClassName(ct.getName());
-            // If unresolved (same as input, no slashes from package), check if it's the current class
             var currentClassName = ollirResult.getOllirClass().getClassName();
             var currentFQN = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
             if (resolved.equals(ct.getName()) && (ct.getName().equals(currentClassName) || ct.getName().equals(currentFQN))) {
@@ -374,10 +448,8 @@ public class JasminGenerator {
         }
         var methodName = ((LiteralElement) call.getMethodName()).getLiteral().replace("\"", "");
 
-        // Load caller object
         code.append(apply(call.getCaller()));
 
-        // Load arguments
         for (var arg : call.getArguments()) {
             code.append(apply(arg));
         }
@@ -386,8 +458,6 @@ public class JasminGenerator {
                 .map(a -> types.getTypeDescriptor(a.getType()))
                 .collect(Collectors.joining());
 
-        // OLLIR sometimes annotates the return type wrongly (e.g. array method as i32).
-        // Look up the real return type from the class definition when possible.
         var returnDescriptor = getRealReturnDescriptor(methodName, argsDescriptor, call.getReturnType());
 
         code.append("invokevirtual ").append(className).append("/")
@@ -404,7 +474,6 @@ public class JasminGenerator {
                     .map(p -> types.getTypeDescriptor(p.getType()))
                     .collect(Collectors.joining());
             if (!methodArgsDescriptor.equals(argsDescriptor)) continue;
-            // Use the actual return type from the method definition
             return types.getTypeDescriptor(method.getReturnType());
         }
         return types.getTypeDescriptor(ollirReturnType);
@@ -417,7 +486,6 @@ public class JasminGenerator {
         var className = types.resolveClassName(caller.getName());
         var methodName = ((LiteralElement) call.getMethodName()).getLiteral().replace("\"", "");
 
-        // Load arguments
         for (var arg : call.getArguments()) {
             code.append(apply(arg));
         }
@@ -443,16 +511,13 @@ public class JasminGenerator {
         if (callerType instanceof ClassType ct) {
             className = types.resolveClassName(ct.getName());
         } else {
-            // 'this' type or similar
             var superClass = ollirResult.getOllirClass().getSuperClass();
             className = superClass == null ? "java/lang/Object" : types.resolveClassName(superClass);
         }
         var methodName = ((LiteralElement) call.getMethodName()).getLiteral().replace("\"", "");
 
-        // Load caller
         code.append(apply(call.getCaller()));
 
-        // Load arguments
         for (var arg : call.getArguments()) {
             code.append(apply(arg));
         }
@@ -468,8 +533,6 @@ public class JasminGenerator {
 
         return code.toString();
     }
-
-    // ---- Helpers ----
 
     private boolean isVoidType(Type type) {
         if (type instanceof BuiltinType bt) {
