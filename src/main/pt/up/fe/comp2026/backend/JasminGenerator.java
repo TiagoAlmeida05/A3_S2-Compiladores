@@ -85,7 +85,10 @@ public class JasminGenerator {
         var nameWithPackage = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
         code.append(".class public ").append(nameWithPackage).append(NL).append(NL);
 
-        var fullSuperClass = "java/lang/Object";
+        var superClass = ollirResult.getOllirClass().getSuperClass();
+        var fullSuperClass = (superClass == null || superClass.equals("Object"))
+                ? "java/lang/Object"
+                : types.resolveClassName(superClass);
         code.append(".super ").append(fullSuperClass).append(NL).append(NL);
 
         for (var field : ollirResult.getOllirClass().getFields()) {

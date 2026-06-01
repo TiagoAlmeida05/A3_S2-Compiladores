@@ -65,7 +65,17 @@ public class JasminUtils {
         }
 
         if (type instanceof ClassType classType) {
-            var className = classType.getName().replace('.', '/');
+            var name = classType.getName();
+            // Se não está nos imports e coincide com a própria classe, usa o FQN
+            String className;
+            if (fullClassnames.containsKey(name)) {
+                className = fullClassnames.get(name);
+            } else if (name.equals(ollirResult.getOllirClass().getClassName())
+                    || name.equals(ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/'))) {
+                className = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
+            } else {
+                className = name.replace('.', '/');
+            }
             return "L" + className + ";";
         }
 
