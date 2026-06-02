@@ -209,7 +209,7 @@ public class JasminGenerator {
         if (inst instanceof AssignInstruction assign) {
             int base = 0;
             if (assign.getDest() instanceof ArrayOperand) {
-                base = 2; // array ref e index na stack
+                base = 2;
             }
             return base + getExprPeakStack(assign.getRhs());
         } else if (inst instanceof CallInstruction call) {
@@ -288,7 +288,8 @@ public class JasminGenerator {
                 String methodName = null;
                 try {
                     methodName = ((LiteralElement) rhsCall.getMethodName()).getLiteral().replace("\"", "");
-                } catch (Exception e) {}
+                } catch (Exception e) {
+                }
 
                 if (methodName == null) {
                     var operand2 = (Operand) lhs;
@@ -389,7 +390,8 @@ public class JasminGenerator {
                     } else if (value >= -32768 && value <= 32767) {
                         return "sipush " + value + NL;
                     }
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException ignored) {
+                }
             }
         }
         return "ldc " + literal.getLiteral() + NL;
@@ -475,10 +477,10 @@ public class JasminGenerator {
 
             code.append("newarray int").append(NL);
         } else {
-            var className = types.getTypeDescriptor(type)
-                    .replace("L", "").replace(";", "");
+            var className = types.getTypeDescriptor(type);
+            className = className.substring(1, className.length() - 1);
             code.append("new ").append(className).append(NL);
-            // Removido o 'dup' porque o OLLIR já separa a instanciação do construtor
+
         }
 
         return code.toString();
