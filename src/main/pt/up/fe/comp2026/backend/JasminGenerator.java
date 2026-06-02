@@ -15,38 +15,26 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
-/**
- * Generates Jasmin code from an OllirResult.
- * <p>
- * One JasminGenerator instance per OllirResult.
- */
 public class JasminGenerator {
 
     private static final String NL = "\n";
     private static final String TAB = "   ";
 
     private final OllirResult ollirResult;
-
     private List<Report> reports;
-
     private String code;
-
     private Method currentMethod;
-
     boolean isInsideAssignment;
-
     private final JasminUtils types;
     private OptUtils utils;
     private final FunctionClassMap<TreeNode, String> generators;
 
     public JasminGenerator(OllirResult ollirResult) {
         this.ollirResult = ollirResult;
-
         reports = new ArrayList<>();
         code = null;
         currentMethod = null;
         isInsideAssignment = false;
-
         types = new JasminUtils(ollirResult);
         utils = null;
         this.generators = new FunctionClassMap<>();
@@ -81,6 +69,13 @@ public class JasminGenerator {
         return code;
     }
 
+    private String escapeName(String name) {
+        if (name.equals("field") || name.equals("method") || name.equals("limit") || name.equals("class")) {
+            return "'" + name + "'";
+        }
+        return name;
+    }
+
     private String generateClassUnit(ClassUnit classUnit) {
         var code = new StringBuilder();
 
@@ -88,41 +83,59 @@ public class JasminGenerator {
         code.append(".class public ").append(nameWithPackage).append(NL).append(NL);
 
         var superClass = ollirResult.getOllirClass().getSuperClass();
-        var fullSuperClass = (superClass == null || superClass.equals("Object"))
-                ? "java/lang/Object"
-                : types.resolveClassName(superClass);
+        String fullSuperClass;
+        if (superClass == null || superClass.equals("Object")) {
+            fullSuperClass = "java/lang/Object";
+        } else {
+            fullSuperClass = types.resolveClassName(superClass);
+            if (fullSuperClass.equals(superClass) && !superClass.contains("/")) {
+                fullSuperClass = resolveImport(superClass);
+            }
+        }
         code.append(".super ").append(fullSuperClass).append(NL).append(NL);
 
         for (var field : ollirResult.getOllirClass().getFields()) {
             var accessModifier = types.getModifier(field.getFieldAccessModifier());
-            var fieldName = field.getFieldName().trim();
+            var fieldName = escapeName(field.getFieldName().trim());
             var fieldType = types.getTypeDescriptor(field.getFieldType()).trim();
-            code.append(".field ").append(accessModifier).append(fieldName)
-                    .append(" ").append(fieldType).append(NL);
+            code.append(".field ").append(accessModifier)
+                    .append(fieldName).append(" ").append(fieldType).append(NL);
         }
 
         code.append(NL);
 
-        var defaultConstructor = """
-                ;default constructor
-                .method public <init>()V
-                    .limit stack 1
-                    .limit locals 1
-                    aload_0
-                    invokespecial %s/<init>()V
-                    return
-                .end method
-                """.formatted(fullSuperClass);
+        var defaultConstructor = ""
+                + "; default constructor\n"
+                + ".method public <init>()V\n"
+                + TAB + ".limit stack 1\n"
+                + TAB + ".limit locals 1\n"
+                + TAB + "aload_0\n"
+                + TAB + "invokespecial " + fullSuperClass + "/<init>()V\n"
+                + TAB + "return\n"
+                + ".end method\n";
         code.append(defaultConstructor);
 
         for (var method : ollirResult.getOllirClass().getMethods()) {
-            if (method.isConstructMethod()) {
-                continue;
-            }
+            if (method.isConstructMethod()) continue;
             code.append(apply(method));
         }
 
         return code.toString();
+    }
+
+    private String resolveImport(String shortName) {
+        for (var imp : ollirResult.getOllirClass().getImports()) {
+            var cleanImp = imp.replace('.', '/');
+            var parts = cleanImp.split("/");
+            if (parts[parts.length - 1].equals(shortName)) {
+                return cleanImp;
+            }
+        }
+        if (shortName.equals("Exception") || shortName.equals("String") || shortName.equals("Object") ||
+                shortName.equals("Thread") || shortName.equals("RuntimeException") || shortName.equals("System")) {
+            return "java/lang/" + shortName;
+        }
+        return shortName;
     }
 
     private String generateMethod(Method method) {
@@ -159,13 +172,86 @@ public class JasminGenerator {
             }
         }
 
-        code.append(TAB).append(".limit stack 99").append(NL);
-        code.append(TAB).append(".limit locals 99").append(NL);
+        int limitLocals = computeLimitLocals(method);
+        int limitStack = computeLimitStack(method);
+
+        code.append(TAB).append(".limit stack ").append(limitStack).append(NL);
+        code.append(TAB).append(".limit locals ").append(limitLocals).append(NL);
         code.append(TAB).append(bodyCode);
         code.append(".end method\n");
 
         currentMethod = null;
         return code.toString();
+    }
+
+    private int computeLimitLocals(Method method) {
+        var varTable = method.getVarTable();
+        if (varTable == null || varTable.isEmpty()) {
+            return method.isStaticMethod() ? 0 : 1;
+        }
+        int maxReg = varTable.values().stream()
+                .mapToInt(Descriptor::getVirtualReg)
+                .max()
+                .orElse(0);
+        return maxReg + 1;
+    }
+
+    private int computeLimitStack(Method method) {
+        int max = 0;
+        for (var inst : method.getInstructions()) {
+            int peak = getInstructionPeakStack(inst);
+            if (peak > max) max = peak;
+        }
+        return Math.max(max, 1);
+    }
+
+    private int getInstructionPeakStack(Instruction inst) {
+        if (inst instanceof AssignInstruction assign) {
+            int base = 0;
+            if (assign.getDest() instanceof ArrayOperand) {
+                base = 2; // array ref e index na stack
+            }
+            return base + getExprPeakStack(assign.getRhs());
+        } else if (inst instanceof CallInstruction call) {
+            return getCallPeakStack(call);
+        } else if (inst instanceof ReturnInstruction ret) {
+            return ret.hasReturnValue() ? 1 : 0;
+        } else if (inst instanceof PutFieldInstruction) {
+            return 2;
+        } else if (inst instanceof SingleOpCondInstruction) {
+            return 1;
+        } else if (inst instanceof OpCondInstruction) {
+            return 2;
+        } else if (inst instanceof GetFieldInstruction) {
+            return 1;
+        }
+        return 1;
+    }
+
+    private int getExprPeakStack(Instruction inst) {
+        if (inst instanceof CallInstruction call) {
+            return getCallPeakStack(call);
+        } else if (inst instanceof BinaryOpInstruction) {
+            return 2;
+        } else if (inst instanceof SingleOpInstruction) {
+            return 1;
+        } else if (inst instanceof ArrayLengthInstruction) {
+            return 1;
+        } else if (inst instanceof NewInstruction) {
+            return 1; // object/array alloc empurra 1
+        } else if (inst instanceof GetFieldInstruction) {
+            return 1;
+        }
+        return 1;
+    }
+
+    private int getCallPeakStack(CallInstruction call) {
+        int peak = call.getArguments().size();
+        var callStr = call.toString().trim().toLowerCase();
+        if (!callStr.contains("invokestatic")) {
+            peak += 1;
+        }
+        return peak;
     }
 
     private String generateAssign(AssignInstruction assign) {
@@ -175,21 +261,16 @@ public class JasminGenerator {
             var code = new StringBuilder();
             var lhs = assign.getDest();
 
-            // --- LHS é um array store (ex: a[i] = valor) ---
             if (lhs instanceof ArrayOperand arrayOp) {
                 var arrayReg = currentMethod.getVarTable().get(arrayOp.getName()).getVirtualReg();
                 code.append(loadRef(arrayReg)).append(NL);
-
                 var indexOp = arrayOp.getIndexOperands().get(0);
                 code.append(apply(indexOp));
-
                 code.append(apply(assign.getRhs()));
-
                 code.append("iastore").append(NL);
                 return code.toString();
             }
 
-            // --- RHS é um NewInstruction ---
             if (assign.getRhs() instanceof NewInstruction) {
                 code.append(apply(assign.getRhs()));
                 var operand = (Operand) lhs;
@@ -203,17 +284,13 @@ public class JasminGenerator {
                 return code.toString();
             }
 
-            // --- RHS é uma CallInstruction ---
             if (assign.getRhs() instanceof CallInstruction rhsCall) {
                 String methodName = null;
                 try {
                     methodName = ((LiteralElement) rhsCall.getMethodName()).getLiteral().replace("\"", "");
-                } catch (Exception e) {
-                    // arraylength ou similar sem nome
-                }
+                } catch (Exception e) {}
 
                 if (methodName == null) {
-                    // arraylength via CallInstruction
                     var operand2 = (Operand) lhs;
                     var reg2 = currentMethod.getVarTable().get(operand2.getName());
                     var caller = rhsCall.getCaller();
@@ -248,13 +325,11 @@ public class JasminGenerator {
                     return code.toString();
                 }
 
-                // Call normal com nome de método
                 code.append(apply(assign.getRhs()));
 
                 var operand = (Operand) lhs;
                 var reg = currentMethod.getVarTable().get(operand.getName());
 
-                // Tentar obter o return descriptor real via reflection (para métodos externos)
                 String realDesc = null;
                 if (rhsCall.getCaller() instanceof Operand callerOp) {
                     var callerClassName = types.resolveClassName(callerOp.getName());
@@ -262,7 +337,6 @@ public class JasminGenerator {
                             callerClassName, methodName, rhsCall.getArguments().size());
                 }
 
-                // Fallback: método local ou inferência do OLLIR
                 if (realDesc == null) {
                     realDesc = getRealReturnDescriptor(
                             methodName,
@@ -284,7 +358,7 @@ public class JasminGenerator {
                 code.append(types.getStore(reg)).append(NL);
                 return code.toString();
             }
-            
+
             code.append(apply(assign.getRhs()));
 
             var operand = (Operand) lhs;
@@ -315,8 +389,7 @@ public class JasminGenerator {
                     } else if (value >= -32768 && value <= 32767) {
                         return "sipush " + value + NL;
                     }
-                } catch (NumberFormatException ignored) {
-                }
+                } catch (NumberFormatException ignored) {}
             }
         }
         return "ldc " + literal.getLiteral() + NL;
@@ -344,7 +417,6 @@ public class JasminGenerator {
 
     private String generateBinaryOp(BinaryOpInstruction binaryOp) {
         var code = new StringBuilder();
-
         code.append(apply(binaryOp.getLeftOperand()));
         code.append(apply(binaryOp.getRightOperand()));
 
@@ -365,7 +437,6 @@ public class JasminGenerator {
 
     private String generateReturn(ReturnInstruction returnInst) {
         var code = new StringBuilder();
-
         var returnType = returnInst.getReturnType();
 
         if (returnType instanceof BuiltinType bt && bt.getKind() == BuiltinKind.VOID) {
@@ -390,7 +461,6 @@ public class JasminGenerator {
                     .findFirst()
                     .orElse(operands.get(operands.size() - 1));
 
-            // Forçar iload para o tamanho — o tipo na var table pode estar errado (array em vez de int)
             if (sizeOperand instanceof Operand op && !op.getName().equals("array")) {
                 var reg = currentMethod.getVarTable().get(op.getName());
                 if (reg != null) {
@@ -400,7 +470,6 @@ public class JasminGenerator {
                     code.append(apply(sizeOperand));
                 }
             } else {
-                // LiteralElement ou outro — usa apply normalmente
                 code.append(apply(sizeOperand));
             }
 
@@ -409,7 +478,7 @@ public class JasminGenerator {
             var className = types.getTypeDescriptor(type)
                     .replace("L", "").replace(";", "");
             code.append("new ").append(className).append(NL);
-            code.append("dup").append(NL);
+            // Removido o 'dup' porque o OLLIR já separa a instanciação do construtor
         }
 
         return code.toString();
@@ -584,40 +653,29 @@ public class JasminGenerator {
 
     private String generatePutField(PutFieldInstruction putField) {
         var code = new StringBuilder();
-
         var object = (Operand) putField.getObject();
         code.append(apply(object));
-
         var value = putField.getValue();
         code.append(apply(value));
-
         var ownerClass = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
-
         var field = putField.getField();
-        var fieldName = field.getName();
+        var fieldName = escapeName(field.getName());
         var fieldDescriptor = types.getTypeDescriptor(field.getType());
-
         code.append("putfield ").append(ownerClass).append("/")
                 .append(fieldName).append(" ").append(fieldDescriptor).append(NL);
-
         return code.toString();
     }
 
     private String generateGetField(GetFieldInstruction getField) {
         var code = new StringBuilder();
-
         var object = (Operand) getField.getObject();
         code.append(apply(object));
-
         var ownerClass = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
-
         var field = getField.getField();
-        var fieldName = field.getName();
+        var fieldName = escapeName(field.getName());
         var fieldDescriptor = types.getTypeDescriptor(field.getType());
-
         code.append("getfield ").append(ownerClass).append("/")
                 .append(fieldName).append(" ").append(fieldDescriptor).append(NL);
-
         return code.toString();
     }
 }
