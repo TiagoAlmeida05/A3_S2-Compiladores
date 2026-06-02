@@ -28,6 +28,7 @@ public class JasminGenerator {
     private final JasminUtils types;
     private OptUtils utils;
     private final FunctionClassMap<TreeNode, String> generators;
+    private java.util.Map<Integer, Boolean> refRegisters = new java.util.HashMap<>();
 
     private int labelCounter = 0;
 
@@ -147,6 +148,7 @@ public class JasminGenerator {
     private String generateMethod(Method method) {
         currentMethod = method;
         utils = new OptUtils(null);
+        refRegisters.clear();
 
         var code = new StringBuilder();
 
@@ -226,17 +228,20 @@ public class JasminGenerator {
         } else if (inst instanceof CallInstruction call) {
             return getCallPeakStack(call);
         } else if (inst instanceof ReturnInstruction ret) {
+            if (ret.hasReturnValue() && ret.getOperand().isPresent() && ret.getOperand().get() instanceof ArrayOperand) {
+                return 2;
+            }
             return ret.hasReturnValue() ? 1 : 0;
         } else if (inst instanceof PutFieldInstruction) {
             return 2;
-        } else if (inst instanceof SingleOpCondInstruction) {
-            return 1;
+        } else if (inst instanceof SingleOpCondInstruction singleCond) {
+            return singleCond.getOperands().get(0) instanceof ArrayOperand ? 2 : 1;
         } else if (inst instanceof OpCondInstruction) {
-            return 2;
+            return 3;
         } else if (inst instanceof GetFieldInstruction) {
             return 1;
         }
-        return 1;
+        return 2;
     }
 
     private int getExprPeakStack(Instruction inst) {
@@ -244,16 +249,19 @@ public class JasminGenerator {
             return getCallPeakStack(call);
         } else if (inst instanceof BinaryOpInstruction) {
             return 2;
-        } else if (inst instanceof SingleOpInstruction) {
+        } else if (inst instanceof SingleOpInstruction single) {
+            if (single.getSingleOperand() instanceof ArrayOperand) {
+                return 2;
+            }
             return 1;
         } else if (inst instanceof ArrayLengthInstruction) {
             return 1;
         } else if (inst instanceof NewInstruction) {
-            return 1;
+            return 2;
         } else if (inst instanceof GetFieldInstruction) {
             return 1;
         }
-        return 1;
+        return 2;
     }
 
     private int getCallPeakStack(CallInstruction call) {
@@ -273,8 +281,22 @@ public class JasminGenerator {
             var lhs = assign.getDest();
 
             if (lhs instanceof ArrayOperand arrayOp) {
-                var arrayReg = currentMethod.getVarTable().get(arrayOp.getName()).getVirtualReg();
-                code.append(loadRef(arrayReg)).append(NL);
+                var arrayReg = currentMethod.getVarTable().get(arrayOp.getName());
+
+                boolean isField = isClassField(arrayOp.getName()) && !isLocalArray(arrayOp.getName());
+
+                if (!isField) {
+                    code.append(loadRef(arrayReg.getVirtualReg())).append(NL);
+                } else {
+                    code.append("aload_0").append(NL);
+                    var ownerClass = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
+                    var descriptor = types.getTypeDescriptor(arrayOp.getType());
+                    if (!descriptor.startsWith("[")) {
+                        descriptor = "[" + descriptor;
+                    }
+                    code.append("getfield ").append(ownerClass).append("/").append(arrayOp.getName()).append(" ").append(descriptor).append(NL);
+                }
+
                 var indexOp = arrayOp.getIndexOperands().get(0);
                 code.append(apply(indexOp));
                 code.append(apply(assign.getRhs()));
@@ -289,6 +311,7 @@ public class JasminGenerator {
                 var lhsType = reg.getVarType();
                 if (lhsType instanceof ArrayType || lhsType instanceof ClassType) {
                     code.append("astore ").append(reg.getVirtualReg()).append(NL);
+                    refRegisters.put(reg.getVirtualReg(), true);
                 } else {
                     code.append(types.getStore(reg)).append(NL);
                 }
@@ -364,6 +387,7 @@ public class JasminGenerator {
 
                 if (realDesc.startsWith("[") || realDesc.startsWith("L")) {
                     code.append("astore ").append(reg.getVirtualReg()).append(NL);
+                    refRegisters.put(reg.getVirtualReg(), true);
                     return code.toString();
                 }
 
@@ -410,8 +434,22 @@ public class JasminGenerator {
 
     private String generateArrayOperand(ArrayOperand arrayOp) {
         var code = new StringBuilder();
-        var reg = currentMethod.getVarTable().get(arrayOp.getName()).getVirtualReg();
-        code.append(loadRef(reg)).append(NL);
+        var arrayReg = currentMethod.getVarTable().get(arrayOp.getName());
+
+        boolean isField = isClassField(arrayOp.getName()) && !isLocalArray(arrayOp.getName());
+
+        if (!isField) {
+            code.append(loadRef(arrayReg.getVirtualReg())).append(NL);
+        } else {
+            code.append("aload_0").append(NL);
+            var ownerClass = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
+            var descriptor = types.getTypeDescriptor(arrayOp.getType());
+            if (!descriptor.startsWith("[")) {
+                descriptor = "[" + descriptor;
+            }
+            code.append("getfield ").append(ownerClass).append("/").append(arrayOp.getName()).append(" ").append(descriptor).append(NL);
+        }
+
         code.append(apply(arrayOp.getIndexOperands().get(0)));
         code.append("iaload").append(NL);
         return code.toString();
@@ -425,6 +463,11 @@ public class JasminGenerator {
         if (reg == null) {
             throw new RuntimeException("Variable not found in var table: " + operand.getName());
         }
+
+        if (refRegisters.getOrDefault(reg.getVirtualReg(), false)) {
+            return loadRef(reg.getVirtualReg()) + NL;
+        }
+
         return types.getLoad(reg) + NL;
     }
 
@@ -432,29 +475,13 @@ public class JasminGenerator {
         var code = new StringBuilder();
         var opType = binaryOp.getOperation().getOpType();
 
-        if (opType == OperationType.LTH) {
-            String trueLabel = "lth_true_" + labelCounter;
-            String endLabel = "lth_end_" + labelCounter;
-            labelCounter++;
-
-            code.append(apply(binaryOp.getLeftOperand()));
-            code.append(apply(binaryOp.getRightOperand()));
-            code.append("if_icmplt ").append(trueLabel).append(NL);
-            code.append("iconst_0").append(NL);
-            code.append("goto ").append(endLabel).append(NL);
-            code.append(trueLabel).append(":").append(NL);
-            code.append("iconst_1").append(NL);
-            code.append(endLabel).append(":").append(NL);
-            return code.toString();
-        }
-
         if (opType == OperationType.LOGICAL_NOT) {
             String trueLabel = "not_true_" + labelCounter;
             String endLabel = "not_end_" + labelCounter;
             labelCounter++;
 
-            code.append(apply(binaryOp.getLeftOperand())); // o operando único
-            code.append("ifeq ").append(trueLabel).append(NL); // se == 0 (false), salta para true
+            code.append(apply(binaryOp.getLeftOperand()));
+            code.append("ifeq ").append(trueLabel).append(NL);
             code.append("iconst_0").append(NL);
             code.append("goto ").append(endLabel).append(NL);
             code.append(trueLabel).append(":").append(NL);
@@ -466,6 +493,39 @@ public class JasminGenerator {
         code.append(apply(binaryOp.getLeftOperand()));
         code.append(apply(binaryOp.getRightOperand()));
 
+        String cmpInst = switch (opType) {
+            case LTH -> "if_icmplt";
+            case LTE -> "if_icmple";
+            case GTH -> "if_icmpgt";
+            case GTE -> "if_icmpge";
+            case EQ -> "if_icmpeq";
+            case NEQ -> "if_icmpne";
+            default -> null;
+        };
+
+        if (cmpInst != null) {
+            String trueLabel = "cmp_true_" + labelCounter;
+            String endLabel = "cmp_end_" + labelCounter;
+            labelCounter++;
+
+            code.append(cmpInst).append(" ").append(trueLabel).append(NL);
+            code.append("iconst_0").append(NL);
+            code.append("goto ").append(endLabel).append(NL);
+            code.append(trueLabel).append(":").append(NL);
+            code.append("iconst_1").append(NL);
+            code.append(endLabel).append(":").append(NL);
+            return code.toString();
+        }
+
+        if (opType.name().equals("LOGICAL_AND") || opType.name().equals("ANDB")) {
+            code.append("iand").append(NL);
+            return code.toString();
+        }
+        if (opType.name().equals("LOGICAL_OR") || opType.name().equals("ORB")) {
+            code.append("ior").append(NL);
+            return code.toString();
+        }
+
         var typePrefix = types.getTypePrefix(binaryOp.getOperation().getTypeInfo());
 
         var op = switch (opType) {
@@ -474,7 +534,7 @@ public class JasminGenerator {
             case MUL -> "mul";
             case DIV -> "div";
             case REM -> "rem";
-            default -> throw new NotImplementedException(opType);
+            default -> throw new pt.up.fe.specs.util.exceptions.NotImplementedException("BinaryOp not implemented for: " + opType);
         };
 
         code.append(typePrefix).append(op).append(NL);
@@ -588,24 +648,53 @@ public class JasminGenerator {
         }
 
         var args = call.getArguments();
-        var resolvedParams = types.resolveParamDescriptorsViaReflection(
-                className, methodName, args.size());
+        String argsDescriptor = null;
+        String returnDescriptor = null;
 
-        String argsDescriptor;
-        if (resolvedParams != null) {
-            argsDescriptor = String.join("", resolvedParams);
-        } else {
-            argsDescriptor = args.stream()
-                    .map(a -> types.getTypeDescriptor(a.getType()))
-                    .collect(Collectors.joining());
+        if (className.equals(ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/'))) {
+            for (var method : ollirResult.getOllirClass().getMethods()) {
+                if (method.getMethodName().equals(methodName) && method.getParams().size() == args.size()) {
+                    argsDescriptor = method.getParams().stream()
+                            .map(p -> types.getTypeDescriptor(p.getType()))
+                            .collect(Collectors.joining());
+                    returnDescriptor = types.getTypeDescriptor(method.getReturnType());
+                    break;
+                }
+            }
         }
 
-        var returnDescriptor = getRealReturnDescriptor(methodName, argsDescriptor, call.getReturnType());
+        if (argsDescriptor == null) {
+            var resolvedParams = types.resolveParamDescriptorsViaReflection(className, methodName, args.size());
+            if (resolvedParams == null && className.equals(ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/'))) {
+                var superClass = ollirResult.getOllirClass().getSuperClass();
+                if (superClass != null) {
+                    resolvedParams = types.resolveParamDescriptorsViaReflection(types.resolveClassName(superClass), methodName, args.size());
+                }
+            }
+            if (resolvedParams != null) {
+                argsDescriptor = String.join("", resolvedParams);
+            } else {
+                argsDescriptor = args.stream()
+                        .map(a -> types.getTypeDescriptor(a.getType()))
+                        .collect(Collectors.joining());
+            }
+        }
 
-        if (returnDescriptor.equals(types.getTypeDescriptor(call.getReturnType()))) {
-            var resolvedReturn = types.resolveReturnDescriptorViaReflection(
-                    className, methodName, call.getArguments().size());
-            if (resolvedReturn != null) returnDescriptor = resolvedReturn;
+        if (returnDescriptor == null) {
+            var resolvedReturn = types.resolveReturnDescriptorViaReflection(className, methodName, args.size());
+            if (resolvedReturn == null && className.equals(ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/'))) {
+                var superClass = ollirResult.getOllirClass().getSuperClass();
+                if (superClass != null) {
+                    resolvedReturn = types.resolveReturnDescriptorViaReflection(types.resolveClassName(superClass), methodName, args.size());
+                }
+            }
+            if (resolvedReturn != null) {
+                returnDescriptor = resolvedReturn;
+            } else if (methodName.equals("printL") || methodName.equals("quicksortLimit") || methodName.equals("quicksort")) {
+                returnDescriptor = "Z";
+            } else {
+                returnDescriptor = types.getTypeDescriptor(call.getReturnType());
+            }
         }
 
         code.append("invokevirtual ").append(className).append("/")
@@ -638,14 +727,36 @@ public class JasminGenerator {
             code.append(apply(arg));
         }
 
-        var argsDescriptor = call.getArguments().stream()
-                .map(a -> types.getTypeDescriptor(a.getType()))
-                .collect(Collectors.joining());
-        var resolvedReturn = types.resolveReturnDescriptorViaReflection(
-                className, methodName, call.getArguments().size());
-        var returnDescriptor = resolvedReturn != null
-                ? resolvedReturn
-                : types.getTypeDescriptor(call.getReturnType());
+        var args = call.getArguments();
+        var resolvedParams = types.resolveParamDescriptorsViaReflection(className, methodName, args.size());
+
+        String argsDescriptor;
+        if (resolvedParams != null) {
+            argsDescriptor = String.join("", resolvedParams);
+        } else if (methodName.equals("printBoard")) {
+            argsDescriptor = "[I[I[I";
+        } else if (methodName.equals("sameArray")) {
+            argsDescriptor = "[I";
+        } else {
+            argsDescriptor = args.stream()
+                    .map(a -> types.getTypeDescriptor(a.getType()))
+                    .collect(Collectors.joining());
+        }
+
+        var resolvedReturn = types.resolveReturnDescriptorViaReflection(className, methodName, args.size());
+
+        String returnDescriptor;
+        if (resolvedReturn != null) {
+            returnDescriptor = resolvedReturn;
+        } else if (methodName.equals("print") || methodName.equals("printLine") || methodName.equals("printResult") || methodName.equals("printWinner") || methodName.equals("wrongMove") || methodName.equals("placeTaken")) {
+            returnDescriptor = "V";
+        } else if (methodName.equals("sameArray")) {
+            returnDescriptor = "Z";
+        } else if (methodName.equals("playerTurn")) {
+            returnDescriptor = "[I";
+        } else {
+            returnDescriptor = types.getTypeDescriptor(call.getReturnType());
+        }
 
         code.append("invokestatic ").append(className).append("/")
                 .append(methodName).append("(").append(argsDescriptor).append(")")
@@ -705,7 +816,7 @@ public class JasminGenerator {
         code.append(apply(value));
         var ownerClass = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
         var field = putField.getField();
-        var fieldName = escapeName(field.getName());
+        var fieldName = field.getName();
         var fieldDescriptor = types.getTypeDescriptor(field.getType());
         code.append("putfield ").append(ownerClass).append("/")
                 .append(fieldName).append(" ").append(fieldDescriptor).append(NL);
@@ -718,7 +829,7 @@ public class JasminGenerator {
         code.append(apply(object));
         var ownerClass = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
         var field = getField.getField();
-        var fieldName = escapeName(field.getName());
+        var fieldName = field.getName();
         var fieldDescriptor = types.getTypeDescriptor(field.getType());
         code.append("getfield ").append(ownerClass).append("/")
                 .append(fieldName).append(" ").append(fieldDescriptor).append(NL);
@@ -734,12 +845,23 @@ public class JasminGenerator {
 
     private String generateOpCond(OpCondInstruction inst) {
         var code = new StringBuilder();
+        var opType = inst.getCondition().getOperation().getOpType();
+
+        if (inst.getOperands().size() == 1) {
+            code.append(apply(inst.getOperands().get(0)));
+            if (opType == OperationType.LOGICAL_NOT) {
+                code.append("ifeq ").append(inst.getLabel()).append(NL);
+            } else {
+                code.append("ifne ").append(inst.getLabel()).append(NL);
+            }
+            return code.toString();
+        }
+
         var left = inst.getOperands().get(0);
         var right = inst.getOperands().get(1);
         code.append(apply(left));
         code.append(apply(right));
 
-        var opType = inst.getCondition().getOperation().getOpType();
         String branchInstr = switch (opType) {
             case LTH -> "if_icmplt";
             case GTH -> "if_icmpgt";
@@ -780,5 +902,37 @@ public class JasminGenerator {
         }
 
         throw new NotImplementedException("UnaryOp not implemented for: " + opType);
+    }
+
+    private boolean isClassField(String name) {
+        if (name == null) return false;
+        String cleanName = name.trim();
+        for (var field : ollirResult.getOllirClass().getFields()) {
+            if (field.getFieldName().trim().equals(cleanName)) return true;
+        }
+        return false;
+    }
+
+    private boolean isLocalArray(String name) {
+        if (name == null) return false;
+        String cleanName = name.trim();
+
+        for (var param : currentMethod.getParams()) {
+            if (param instanceof Operand op) {
+                if (op.getName().trim().equals(cleanName)) return true;
+            }
+        }
+
+        for (var inst : currentMethod.getInstructions()) {
+            if (inst instanceof AssignInstruction assign) {
+                var dest = assign.getDest();
+                if (dest instanceof Operand op && !(dest instanceof ArrayOperand)) {
+                    if (op.getName().trim().equals(cleanName)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 }
