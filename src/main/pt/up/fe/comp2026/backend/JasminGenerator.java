@@ -29,6 +29,8 @@ public class JasminGenerator {
     private OptUtils utils;
     private final FunctionClassMap<TreeNode, String> generators;
 
+    private int labelCounter = 0;
+
     public JasminGenerator(OllirResult ollirResult) {
         this.ollirResult = ollirResult;
         reports = new ArrayList<>();
@@ -52,6 +54,10 @@ public class JasminGenerator {
         generators.put(CallInstruction.class, this::generateCall);
         generators.put(PutFieldInstruction.class, this::generatePutField);
         generators.put(GetFieldInstruction.class, this::generateGetField);
+        generators.put(SingleOpCondInstruction.class, this::generateSingleOpCond);
+        generators.put(OpCondInstruction.class, this::generateOpCond);
+        generators.put(GotoInstruction.class, this::generateGoto);
+        generators.put(UnaryOpInstruction.class, this::generateUnaryOp);
     }
 
     private String apply(TreeNode node) {
@@ -161,6 +167,11 @@ public class JasminGenerator {
 
         var bodyCode = new StringBuilder();
         for (var inst : method.getInstructions()) {
+
+            for (var label : method.getLabels(inst)) {
+                bodyCode.append(TAB).append(label).append(":").append(NL);
+            }
+
             var instCode = StringLines.getLines(apply(inst)).stream()
                     .collect(Collectors.joining(NL + TAB, TAB, NL));
             bodyCode.append(instCode);
@@ -238,7 +249,7 @@ public class JasminGenerator {
         } else if (inst instanceof ArrayLengthInstruction) {
             return 1;
         } else if (inst instanceof NewInstruction) {
-            return 1; // object/array alloc empurra 1
+            return 1;
         } else if (inst instanceof GetFieldInstruction) {
             return 1;
         }
@@ -419,18 +430,51 @@ public class JasminGenerator {
 
     private String generateBinaryOp(BinaryOpInstruction binaryOp) {
         var code = new StringBuilder();
+        var opType = binaryOp.getOperation().getOpType();
+
+        if (opType == OperationType.LTH) {
+            String trueLabel = "lth_true_" + labelCounter;
+            String endLabel = "lth_end_" + labelCounter;
+            labelCounter++;
+
+            code.append(apply(binaryOp.getLeftOperand()));
+            code.append(apply(binaryOp.getRightOperand()));
+            code.append("if_icmplt ").append(trueLabel).append(NL);
+            code.append("iconst_0").append(NL);
+            code.append("goto ").append(endLabel).append(NL);
+            code.append(trueLabel).append(":").append(NL);
+            code.append("iconst_1").append(NL);
+            code.append(endLabel).append(":").append(NL);
+            return code.toString();
+        }
+
+        if (opType == OperationType.LOGICAL_NOT) {
+            String trueLabel = "not_true_" + labelCounter;
+            String endLabel = "not_end_" + labelCounter;
+            labelCounter++;
+
+            code.append(apply(binaryOp.getLeftOperand())); // o operando único
+            code.append("ifeq ").append(trueLabel).append(NL); // se == 0 (false), salta para true
+            code.append("iconst_0").append(NL);
+            code.append("goto ").append(endLabel).append(NL);
+            code.append(trueLabel).append(":").append(NL);
+            code.append("iconst_1").append(NL);
+            code.append(endLabel).append(":").append(NL);
+            return code.toString();
+        }
+
         code.append(apply(binaryOp.getLeftOperand()));
         code.append(apply(binaryOp.getRightOperand()));
 
         var typePrefix = types.getTypePrefix(binaryOp.getOperation().getTypeInfo());
 
-        var op = switch (binaryOp.getOperation().getOpType()) {
+        var op = switch (opType) {
             case ADD -> "add";
             case SUB -> "sub";
             case MUL -> "mul";
             case DIV -> "div";
             case REM -> "rem";
-            default -> throw new NotImplementedException(binaryOp.getOperation().getOpType());
+            default -> throw new NotImplementedException(opType);
         };
 
         code.append(typePrefix).append(op).append(NL);
@@ -679,5 +723,62 @@ public class JasminGenerator {
         code.append("getfield ").append(ownerClass).append("/")
                 .append(fieldName).append(" ").append(fieldDescriptor).append(NL);
         return code.toString();
+    }
+
+    private String generateSingleOpCond(SingleOpCondInstruction inst) {
+        var code = new StringBuilder();
+        code.append(apply(inst.getOperands().get(0)));
+        code.append("ifne ").append(inst.getLabel()).append(NL);
+        return code.toString();
+    }
+
+    private String generateOpCond(OpCondInstruction inst) {
+        var code = new StringBuilder();
+        var left = inst.getOperands().get(0);
+        var right = inst.getOperands().get(1);
+        code.append(apply(left));
+        code.append(apply(right));
+
+        var opType = inst.getCondition().getOperation().getOpType();
+        String branchInstr = switch (opType) {
+            case LTH -> "if_icmplt";
+            case GTH -> "if_icmpgt";
+            case LTE -> "if_icmple";
+            case GTE -> "if_icmpge";
+            case EQ -> "if_icmpeq";
+            case NEQ -> "if_icmpne";
+            default -> throw new NotImplementedException("OpCond not implemented for: " + opType);
+        };
+        code.append(branchInstr).append(" ").append(inst.getLabel()).append(NL);
+        return code.toString();
+    }
+
+    private String generateGoto(GotoInstruction inst) {
+        var code = new StringBuilder();
+        code.append("goto ").append(inst.getLabel()).append(NL);
+        return code.toString();
+    }
+
+
+    private String generateUnaryOp(UnaryOpInstruction unaryOp) {
+        var code = new StringBuilder();
+        var opType = unaryOp.getOperation().getOpType();
+
+        if (opType == OperationType.LOGICAL_NOT || opType == OperationType.LOGICAL_NOT) {
+            String trueLabel = "not_true_" + labelCounter;
+            String endLabel = "not_end_" + labelCounter;
+            labelCounter++;
+
+            code.append(apply(unaryOp.getOperand()));
+            code.append("ifeq ").append(trueLabel).append(NL);
+            code.append("iconst_0").append(NL);
+            code.append("goto ").append(endLabel).append(NL);
+            code.append(trueLabel).append(":").append(NL);
+            code.append("iconst_1").append(NL);
+            code.append(endLabel).append(":").append(NL);
+            return code.toString();
+        }
+
+        throw new NotImplementedException("UnaryOp not implemented for: " + opType);
     }
 }
