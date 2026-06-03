@@ -141,7 +141,20 @@ public class JasminUtils {
         if (name.equals(ownClassName) || name.equals(ownFQN)) {
             return ownFQN;
         }
-        return fullClassnames.getOrDefault(name, name.replace('.', '/'));
+
+        if (fullClassnames.containsKey(name)) {
+            return fullClassnames.get(name);
+        }
+
+        if (!name.contains("/") && !name.contains(".")) {
+            try {
+                Class.forName("java.lang." + name);
+                return "java/lang/" + name;
+            } catch (ClassNotFoundException ignored) {
+            }
+        }
+
+        return name.replace('.', '/');
     }
 
     public List<String> resolveParamDescriptorsViaReflection(String className, String methodName, int argCount) {

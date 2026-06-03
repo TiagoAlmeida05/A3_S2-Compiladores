@@ -138,10 +138,30 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
         if (targetNode.getKind().toString().toUpperCase().contains("VAR_REF_EXPR")) {
             var varName = targetNode.get("name");
             JmmType arrayType = lookupVarType(varName);
+
+            boolean isField = false;
+            if (currentMethod != null) {
+                boolean isLocalOrParam = currentMethod.getLocalVariable(varName).isPresent() ||
+                        currentMethod.getParameter(varName).isPresent();
+                if (!isLocalOrParam)
+                    isField = table.getField(varName).isPresent();
+            }
+
             JmmType elemType = (arrayType instanceof JmmArrayType arr) ? arr.itemType() : TypeUtils.intType();
             String arrayTypeStr = ollirTypes.toOllirType(arrayType);
             elemTypeStr = ollirTypes.toOllirType(elemType);
-            arrayCode = ollirTypes.sanitizeId(varName) + arrayTypeStr;
+
+            if (isField) {
+                String tempArray = ollirTypes.nextTemp() + arrayTypeStr;
+                code.append(tempArray).append(SPACE)
+                        .append(ASSIGN).append(arrayTypeStr).append(SPACE)
+                        .append("getfield(this, ")
+                        .append(ollirTypes.sanitizeId(varName)).append(arrayTypeStr)
+                        .append(")").append(arrayTypeStr).append(END_STMT);
+                arrayCode = tempArray;
+            } else {
+                arrayCode = ollirTypes.sanitizeId(varName) + arrayTypeStr;
+            }
         } else {
             OllirExprResult innerResult = exprVisitor.visit(targetNode);
             code.append(innerResult.getComputation());
@@ -249,19 +269,46 @@ public class OllirGeneratorVisitor extends AJmmVisitor<Void, String> {
 
         var code = new StringBuilder();
 
-        code.append(visit(node.getChild(0)));
+        JmmNode initNode = null;
+        JmmNode condNode = null;
+        JmmNode iterNode = null;
+        JmmNode bodyNode = null;
+
+        for (var child : node.getChildren()) {
+            if (FOR_ASSIGN_INIT.check(child)) {
+                initNode = child;
+            } else if (FOR_ASSIGN_ITER.check(child)) {
+                iterNode = child;
+            } else if (child.getKind().toString().endsWith("STMT")) {
+                bodyNode = child;
+            } else {
+                condNode = child;
+            }
+        }
+
+        if (initNode != null) {
+            code.append(visit(initNode));
+        }
 
         code.append(loopLabel).append(":\n");
-        var condResult = exprVisitor.visit(node.getChild(1));
-        code.append(condResult.getComputation());
-        code.append("if (").append(condResult.getCode()).append(") goto ").append(bodyLabel).append(END_STMT);
-        code.append("goto ").append(endLabel).append(END_STMT);
+        if (condNode != null) {
+            var condResult = exprVisitor.visit(condNode);
+            code.append(condResult.getComputation());
+            code.append("if (").append(condResult.getCode()).append(") goto ").append(bodyLabel).append(END_STMT);
+            code.append("goto ").append(endLabel).append(END_STMT);
+        } else {
+            code.append("goto ").append(bodyLabel).append(END_STMT);
+        }
 
         code.append(bodyLabel).append(":\n");
-        if (node.getNumChildren() > 3)
-            code.append(visit(node.getChild(3)));
+        if (bodyNode != null) {
+            code.append(visit(bodyNode));
+        }
 
-        code.append(visit(node.getChild(2)));
+        if (iterNode != null) {
+            code.append(visit(iterNode));
+        }
+
         code.append("goto ").append(loopLabel).append(END_STMT);
         code.append(endLabel).append(":\n");
         return code.toString();
