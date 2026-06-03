@@ -315,14 +315,48 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
 
         String methodName = node.get("method");
         JmmType retType = types.getExprType(node);
-        String retOllirType = toSafeOllirType(retType);
 
-        if (methodName.equals("read") || methodName.startsWith("get")) {
-            retOllirType = ".i32";
-        } else if (methodName.equals("print") || methodName.equals("println") || methodName.contains("Void")) {
-            retOllirType = ".V";
-        } else if (methodName.equals("self")) {
-            retOllirType = ollirTypes.toOllirType(types.getExprType(calleeNode));
+        // Try to get method signature to use correct parameter types and return type
+        List<pt.up.fe.comp.jmm.analysis.table.Symbol> parameters = null;
+        JmmType methodReturnType = null;
+
+        JmmType calleeType = types.getExprType(calleeNode);
+        if (calleeType instanceof JmmClassType classType) {
+            String className = classType.name();
+            SymbolTable targetST = null;
+            if (className.equals(table.getClassName())) {
+                targetST = table;
+            } else if (table instanceof pt.up.fe.comp2026.symboltable.JmmSymbolTable jmmTable) {
+                String fqn = table.getImportedFullyQualifiedName(className).orElse(className);
+                targetST = jmmTable.getImportedSymbolTable(fqn).orElse(null);
+            }
+
+            if (targetST != null) {
+                var methods = targetST.getMethods(methodName);
+                // Look for a method with matching number of arguments
+                var matchedMethod = methods.stream()
+                        .filter(m -> m.parameters().size() == argNodes.size())
+                        .findFirst();
+                if (matchedMethod.isPresent()) {
+                    parameters = matchedMethod.get().parameters();
+                    methodReturnType = matchedMethod.get().returnType();
+                }
+            }
+        }
+
+        String retOllirType;
+        if (methodReturnType != null) {
+            retOllirType = ollirTypes.toOllirType(methodReturnType);
+        } else {
+            retOllirType = toSafeOllirType(retType);
+
+            if (methodName.equals("read") || methodName.startsWith("get")) {
+                retOllirType = ".i32";
+            } else if (methodName.equals("print") || methodName.equals("println") || methodName.contains("Void")) {
+                retOllirType = ".V";
+            } else if (methodName.equals("self")) {
+                retOllirType = ollirTypes.toOllirType(types.getExprType(calleeNode));
+            }
         }
 
         String invokeKind = resolveInvokeKind(calleeNode);
@@ -334,9 +368,22 @@ public class OllirExprGeneratorVisitor extends AJmmVisitor<Void, OllirExprResult
             callerCode = calleeResult.getCode();
         }
 
-        String argsCode = args.stream()
-                .map(OllirExprResult::getCode)
-                .collect(Collectors.joining(", "));
+        StringBuilder argsCodeSB = new StringBuilder();
+        for (int i = 0; i < args.size(); i++) {
+            if (i > 0) argsCodeSB.append(", ");
+            String argCode = args.get(i).getCode();
+            if (parameters != null && i < parameters.size()) {
+                String paramOllirType = ollirTypes.toOllirType(parameters.get(i).type());
+                int firstDot = argCode.indexOf('.');
+                if (firstDot != -1) {
+                    argCode = argCode.substring(0, firstDot) + paramOllirType;
+                } else {
+                    argCode = argCode + paramOllirType;
+                }
+            }
+            argsCodeSB.append(argCode);
+        }
+        String argsCode = argsCodeSB.toString();
 
         String callExpr = invokeKind
                 + "(" + callerCode

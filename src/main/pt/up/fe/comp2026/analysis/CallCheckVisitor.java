@@ -182,6 +182,9 @@ public class CallCheckVisitor extends AnalysisVisitor {
         if (importedST.isEmpty()) return null;
 
         var constructors = importedST.get().getMethods(className);
+        if (constructors.isEmpty()) {
+            constructors = importedST.get().getMethods("<init>");
+        }
 
         if (constructors.isEmpty()) return null;
 
