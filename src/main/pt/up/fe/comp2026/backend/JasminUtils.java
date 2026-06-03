@@ -58,7 +58,7 @@ public class JasminUtils {
 
     public String getTypeDescriptor(Type type) {
         if (type instanceof ArrayType arrayType) {
-            return "[" + getTypeDescriptor(arrayType.getElementType());
+            return "[".repeat(arrayType.getNumDimensions()) + getTypeDescriptor(arrayType.getElementType());
         }
 
         if (type instanceof BuiltinType builtinType) {

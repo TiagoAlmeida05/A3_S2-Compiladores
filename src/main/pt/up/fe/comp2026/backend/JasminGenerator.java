@@ -111,19 +111,7 @@ public class JasminGenerator {
 
         code.append(NL);
 
-        var defaultConstructor = ""
-                + "; default constructor\n"
-                + ".method public <init>()V\n"
-                + TAB + ".limit stack 1\n"
-                + TAB + ".limit locals 1\n"
-                + TAB + "aload_0\n"
-                + TAB + "invokespecial " + fullSuperClass + "/<init>()V\n"
-                + TAB + "return\n"
-                + ".end method\n";
-        code.append(defaultConstructor);
-
         for (var method : ollirResult.getOllirClass().getMethods()) {
-            if (method.isConstructMethod()) continue;
             code.append(apply(method));
         }
 
@@ -152,9 +140,12 @@ public class JasminGenerator {
 
         var code = new StringBuilder();
 
-        var modifier = types.getModifier(AccessModifier.PUBLIC);
+        var modifier = types.getModifier(method.getMethodAccessModifier());
+        if (method.isConstructMethod() && modifier.isEmpty()) {
+            modifier = "public ";
+        }
         var staticMod = method.isStaticMethod() ? "static " : "";
-        var methodName = method.getMethodName();
+        var methodName = method.isConstructMethod() ? "<init>" : method.getMethodName();
 
         var params = method.getParams().stream()
                 .map(p -> types.getTypeDescriptor(p.getType()))
@@ -187,6 +178,13 @@ public class JasminGenerator {
 
         int limitLocals = computeLimitLocals(method);
         int limitStack = computeLimitStack(method);
+
+        if (isVoidType(method.getReturnType())) {
+            var insts = method.getInstructions();
+            if (insts.isEmpty() || !(insts.get(insts.size() - 1) instanceof ReturnInstruction)) {
+                bodyCode.append(TAB).append("return").append(NL);
+            }
+        }
 
         code.append(TAB).append(".limit stack ").append(limitStack).append(NL);
         code.append(TAB).append(".limit locals ").append(limitLocals).append(NL);
@@ -300,7 +298,24 @@ public class JasminGenerator {
                 var indexOp = arrayOp.getIndexOperands().get(0);
                 code.append(apply(indexOp));
                 code.append(apply(assign.getRhs()));
-                code.append("iastore").append(NL);
+                var type = arrayOp.getType();
+                var prefix = "i";
+                if (type instanceof ArrayType || type instanceof ClassType) {
+                    prefix = "a";
+                } else if (type instanceof BuiltinType bt && bt.getKind() == BuiltinKind.BOOLEAN) {
+                    prefix = "b";
+                }
+                code.append(prefix).append("astore").append(NL);
+                return code.toString();
+            }
+
+            if (lhs instanceof Operand operand && !operand.getName().equals("this") && isClassField(operand.getName()) && !isLocalArray(operand.getName())) {
+                code.append("aload_0").append(NL);
+                code.append(apply(assign.getRhs()));
+                var ownerClass = ollirResult.getOllirClass().getClassFullyQualifiedName().replace('.', '/');
+                var fieldName = operand.getName();
+                var fieldType = types.getTypeDescriptor(operand.getType());
+                code.append("putfield ").append(ownerClass).append("/").append(fieldName).append(" ").append(fieldType).append(NL);
                 return code.toString();
             }
 
@@ -451,7 +466,14 @@ public class JasminGenerator {
         }
 
         code.append(apply(arrayOp.getIndexOperands().get(0)));
-        code.append("iaload").append(NL);
+        var type = arrayOp.getType();
+        var prefix = "i";
+        if (type instanceof ArrayType || type instanceof ClassType) {
+            prefix = "a";
+        } else if (type instanceof BuiltinType bt && bt.getKind() == BuiltinKind.BOOLEAN) {
+            prefix = "b";
+        }
+        code.append(prefix).append("aload").append(NL);
         return code.toString();
     }
 
@@ -562,29 +584,44 @@ public class JasminGenerator {
 
         if (type instanceof ArrayType) {
             var operands = newInst.getOperands();
-            var sizeOperand = operands.stream()
+            var sizeOperands = operands.stream()
                     .filter(op -> !(op instanceof Operand o && o.getName().equals("array")))
-                    .findFirst()
-                    .orElse(operands.get(operands.size() - 1));
+                    .collect(Collectors.toList());
 
-            if (sizeOperand instanceof Operand op && !op.getName().equals("array")) {
-                var reg = currentMethod.getVarTable().get(op.getName());
-                if (reg != null) {
-                    int n = reg.getVirtualReg();
-                    code.append("iload").append(n < 4 ? "_" : " ").append(n).append(NL);
-                } else {
-                    code.append(apply(sizeOperand));
-                }
-            } else {
-                code.append(apply(sizeOperand));
+            for (var sizeOp : sizeOperands) {
+                code.append(apply(sizeOp));
             }
 
-            code.append("newarray int").append(NL);
+            if (sizeOperands.size() > 1) {
+                code.append("multianewarray ").append(types.getTypeDescriptor(type)).append(" ").append(sizeOperands.size()).append(NL);
+            } else {
+                var arrayType = (ArrayType) type;
+                var elemType = arrayType.getElementType();
+                if (elemType instanceof BuiltinType bt) {
+                    var kind = bt.getKind();
+                    if (kind == BuiltinKind.INT32) {
+                        code.append("newarray int").append(NL);
+                    } else if (kind == BuiltinKind.BOOLEAN) {
+                        code.append("newarray boolean").append(NL);
+                    } else {
+                        var desc = types.getTypeDescriptor(elemType);
+                        if (desc.startsWith("L") && desc.endsWith(";")) {
+                            desc = desc.substring(1, desc.length() - 1);
+                        }
+                        code.append("anewarray ").append(desc).append(NL);
+                    }
+                } else {
+                    var desc = types.getTypeDescriptor(elemType);
+                    if (desc.startsWith("L") && desc.endsWith(";")) {
+                        desc = desc.substring(1, desc.length() - 1);
+                    }
+                    code.append("anewarray ").append(desc).append(NL);
+                }
+            }
         } else {
             var className = types.getTypeDescriptor(type);
             className = className.substring(1, className.length() - 1);
             code.append("new ").append(className).append(NL);
-
         }
 
         return code.toString();
@@ -917,22 +954,7 @@ public class JasminGenerator {
         if (name == null) return false;
         String cleanName = name.trim();
 
-        for (var param : currentMethod.getParams()) {
-            if (param instanceof Operand op) {
-                if (op.getName().trim().equals(cleanName)) return true;
-            }
-        }
-
-        for (var inst : currentMethod.getInstructions()) {
-            if (inst instanceof AssignInstruction assign) {
-                var dest = assign.getDest();
-                if (dest instanceof Operand op && !(dest instanceof ArrayOperand)) {
-                    if (op.getName().trim().equals(cleanName)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
+        var reg = currentMethod.getVarTable().get(cleanName);
+        return reg != null && reg.getVirtualReg() >= 0;
     }
 }
