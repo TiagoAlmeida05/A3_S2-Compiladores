@@ -55,8 +55,6 @@ public class CallCheckVisitor extends AnalysisVisitor {
             }
             if (allMatch) return method;
         }
-
-        // 2ª passagem (fallback): só por número de args — para casos onde os tipos não são resolúveis ainda
         for (var method : methods) {
             if (method.parameters().size() == args.size()) {
                 return method;
@@ -104,7 +102,6 @@ public class CallCheckVisitor extends AnalysisVisitor {
             String superName = table.getSuperFullyQualifiedName();
             if (superName != null) {
                 var superST = resolveExternalSymbolTable(jmmTable, superName);
-
                 if (superST.isPresent()) {
                     var superMethods = superST.get().getMethods(methodName);
                     if (!superMethods.isEmpty()) {
@@ -119,6 +116,8 @@ public class CallCheckVisitor extends AnalysisVisitor {
                             return null;
                         }
                     }
+                } else {
+                    return null;
                 }
             }
 
@@ -128,14 +127,14 @@ public class CallCheckVisitor extends AnalysisVisitor {
 
         } else {
             String resolveName = table.getImportedFullyQualifiedName(typeName).orElse(typeName);
-            var importedST = jmmTable.getImportedSymbolTable(resolveName);
+            var importedST = resolveExternalSymbolTable(jmmTable, resolveName);
 
             if (importedST.isPresent()) {
                 var methods = importedST.get().getMethods(methodName);
                 if (methods.isEmpty()) {
                     addReport(Report.newError(Stage.SEMANTIC,
                             NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
-                            "Method '" + methodName + "' not found in imported class '" + resolveName + "´", null));
+                            "Method '" + methodName + "' not found in imported class '" + resolveName + "'", null));
                     return null;
                 }
 
@@ -216,7 +215,6 @@ public class CallCheckVisitor extends AnalysisVisitor {
         var jmmTable = (JmmSymbolTable) table;
         var typeUtils = TypeUtils.with(table);
 
-        // Procura overload local
         var localMethods = table.getMethods(methodName);
         var matchedLocal = findMatchingOverload(methodCall, localMethods, typeUtils);
         if (matchedLocal != null) {
@@ -224,7 +222,6 @@ public class CallCheckVisitor extends AnalysisVisitor {
             return null;
         }
 
-        // Procura na superclasse
         String superName = table.getSuperFullyQualifiedName();
         if (superName != null) {
             var superST = resolveExternalSymbolTable(jmmTable, superName);
@@ -235,10 +232,11 @@ public class CallCheckVisitor extends AnalysisVisitor {
                     validateArguments(methodCall, matchedSuper.parameters(), typeUtils);
                     return null;
                 }
+            } else {
+                return null;
             }
         }
 
-        // Método não existe
         if (localMethods.isEmpty()) {
             addReport(Report.newError(Stage.SEMANTIC,
                     NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),

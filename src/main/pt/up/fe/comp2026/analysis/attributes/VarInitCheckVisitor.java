@@ -17,11 +17,18 @@ public class VarInitCheckVisitor extends AnalysisVisitor {
     }
 
     private Void visitVardDecl(JmmNode varDecl, SymbolTable table) {
-        if (varDecl.getChildren().size() > 1){
+        int typeIndex = 0;
+        if (!varDecl.getChildren().isEmpty() && JmmKind.VISIBILITY.check(varDecl.getChild(0))) {
+            typeIndex = 1;
+        }
+
+        if (varDecl.getChildren().size() > typeIndex + 1){
             var typeUtils = TypeUtils.with(table);
-            var typeNode = varDecl.getChild(0);
+
+            var typeNode = varDecl.getChild(typeIndex);
             var declaredType = typeUtils.convertType(typeNode);
-            var exprNode = varDecl.getChild(1);
+
+            var exprNode = varDecl.getChild(typeIndex + 1);
 
             try {
                 var exprType = typeUtils.getExprType(exprNode);
@@ -32,7 +39,6 @@ public class VarInitCheckVisitor extends AnalysisVisitor {
                                     " to " + declaredType.print(), null));
                 }
             } catch (Exception e) {
-
             }
         }
         return null;

@@ -29,6 +29,15 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
     }
 
     private Void visitAssignStmt(JmmNode assignStmt, SymbolTable table) {
+        var varName = assignStmt.get("var");
+
+        if ("this".equals(varName)) {
+            addReport(Report.newError(Stage.SEMANTIC,
+                    NodeUtils.getLine(assignStmt), NodeUtils.getColumn(assignStmt),
+                    "Cannot assign a value to the 'this' keyword.", null));
+            return null;
+        }
+
         var methodNode = assignStmt.getAncestor(JmmKind.METHOD_DECL).orElse(null);
         if (methodNode == null) return null;
 
@@ -36,19 +45,17 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         currentMethod = table.getMethod(signature).orElse(null);
         if (currentMethod == null) return null;
 
-        var varName = assignStmt.get("var");
         var valueExpr = assignStmt.getChild(0);
 
         JmmType leftType = getVarType(varName, table);
         if (leftType == null) return null;
-        System.out.println("ASSIGN var=" + assignStmt.get("var") + " attrs=" + assignStmt.getAttributes());
+
         JmmType rightType;
         try {
             rightType = TypeUtils.with(table).getExprType(valueExpr);
         } catch (Exception e) {
             return null;
         }
-        System.out.println("leftType=" + leftType + " rightType=" + rightType + " rightClass=" + rightType.getClass().getSimpleName());
 
         if (!isAssignable(leftType, rightType, table)) {
             addReport(Report.newError(Stage.SEMANTIC,

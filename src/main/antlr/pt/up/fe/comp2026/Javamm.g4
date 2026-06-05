@@ -37,7 +37,7 @@ BLOCK_COMMENT  : '/*' .*? '*/' -> skip;
 // Program Structure
 
 program
-    : packageDecl importDecl* classNode=classDecl EOF
+    : packageDecl? importDecl* classNode=classDecl EOF
     ;
 
 importDecl
@@ -84,8 +84,8 @@ visibility
 // Variables and Parameters
 
 varDecl
-    : typeNode=type name=ID ';'
-    | typeNode=type name=ID '=' expr ';'
+    : visibility? typeNode=type name=ID ';'
+    | visibility? typeNode=type name=ID '=' expr ';'
     ;
 
 param
@@ -142,9 +142,9 @@ stmt
     | DO body=stmt WHILE '(' cond=expr ')' ';'              #DoWhileStmt
 
     // Assignment
-    | var=ID '=' value=expr ';'                             #AssignStmt
-    | var=ID op=('+=' | '-=' | '*=' | '/=' | '%=')
-    value=expr ';'                                          #CompoundAssignStmt
+    | var=(ID | THIS) '=' value=expr ';'                    #AssignStmt
+    | var=(ID | THIS) op=('+=' | '-=' | '*=' | '/=' | '%=')
+      value=expr ';'                                        #CompoundAssignStmt
     | target=expr '[' index=expr ']' '=' value=expr ';'     #ArrayAssignStmt
     | target=expr '[' index=expr ']'
       op=('+=' | '-=' | '*=' | '/=' | '%=') value=expr ';'  #ArrayCompoundAssignStmt

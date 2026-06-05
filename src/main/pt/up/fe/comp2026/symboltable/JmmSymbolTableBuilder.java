@@ -74,10 +74,6 @@ public class JmmSymbolTableBuilder {
             if (!imports.contains(importPath)) {
                 imports.add(importPath);
             }
-            if (importer.tryClassOf(importPath).isEmpty()) {
-                reports.add(newError(imp,
-                        "Imported class does not exist: " + importPath));
-            }
         }
 
         var classDecl = root.getObject("classNode", JmmNode.class);
@@ -137,17 +133,19 @@ public class JmmSymbolTableBuilder {
     private List<Symbol> buildFields(JmmNode classDecl) {
         List<Symbol> fields = new ArrayList<>();
 
-
         for (JmmNode varDecl : classDecl.getChildren(VAR_DECL)) {
             var name = varDecl.get(JmmAttributes.VAR_DECL.NAME);
 
-            // Verifica duplicados
             if (fields.stream().anyMatch(f -> f.name().equals(name))) {
                 reports.add(newError(varDecl, "Field '" + name + "' already declared"));
-                continue; // ignora este campo duplicado
+                continue;
             }
 
-            var typeNode = varDecl.getChild(0);
+            JmmNode typeNode = varDecl.getChildren().stream()
+                    .filter(child -> !VISIBILITY.check(child))
+                    .findFirst()
+                    .orElseThrow(() -> new RuntimeException("No type found for var " + name));
+
             var type = buildType(typeNode);
 
             fields.add(new Symbol(type, name));
@@ -212,17 +210,22 @@ public class JmmSymbolTableBuilder {
     private List<Symbol> buildLocals(JmmNode method, List<Symbol> params) {
         List<Symbol> locals = new ArrayList<>();
         Set<String> names = new HashSet<>();
-        // Adiciona parâmetros
+
         for (var p : params) {
             names.add(p.name());
         }
 
         for (var varDecl : method.getChildren(VAR_DECL)) {
             String varName = varDecl.get(JmmAttributes.VAR_DECL.NAME);
-            JmmType varType = buildType(varDecl.getChild(0));
+
+            JmmNode typeNode = varDecl.getChildren().stream()
+                    .filter(child -> !VISIBILITY.check(child))
+                    .findFirst()
+                    .orElseThrow(() -> new RuntimeException("No type found for var " + varName));
+
+            JmmType varType = buildType(typeNode);
 
             if (names.contains(varName)) {
-                // Se já existe (parâmetro ou variável local anterior), erro
                 reports.add(newError(varDecl, "Duplicate local variable name '" + varName +
                         "' in method '" + method.get("name") + "'"));
             } else {
@@ -259,7 +262,13 @@ public class JmmSymbolTableBuilder {
         List<Symbol> params = new ArrayList<>();
         for (var paramNode : paramNodes) {
             String paramName = paramNode.get(JmmAttributes.PARAM.NAME);
-            JmmType paramType = buildType(paramNode.getChild(0));
+
+            JmmNode typeNode = paramNode.getChildren().stream()
+                    .filter(child -> !VISIBILITY.check(child))
+                    .findFirst()
+                    .orElseThrow(() -> new RuntimeException("No type found for param " + paramName));
+
+            JmmType paramType = buildType(typeNode);
 
             boolean exists = params.stream().anyMatch(s -> s.name().equals(paramName));
             if (exists) {
@@ -278,6 +287,14 @@ public class JmmSymbolTableBuilder {
             visibility = Visibility.fromString(visibilityNodes.getFirst().get("value"));
         }
         boolean isStatic = method.getBoolean(JmmAttributes.METHOD_DECL.IS_STATIC, false);
+
+        if (isStatic) {
+            for (JmmNode descendant : method.getDescendants()) {
+                if (THIS_EXPR.check(descendant)) {
+                    reports.add(newError(descendant, "Cannot use 'this' in a static context"));
+                }
+            }
+        }
+
         return new MethodSymbol(methodName, returnType, params, locals, isStatic, visibility);
-    }
-}
+    }}
