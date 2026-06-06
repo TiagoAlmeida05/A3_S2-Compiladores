@@ -70,14 +70,36 @@ public class JmmSymbolTableBuilder {
         for (var imp : root.getChildren(IMPORT_DECL)) {
             var qN = imp.getChild(0); // qualifiedName
             var importPathList = qN.getObjectAsList("parts", String.class);
+
+            if (importPathList.size() == 1) {
+                reports.add(newError(imp, "Cannot import class without a package: " + importPathList.get(0)));
+                continue;
+            }
+
             var importPath = String.join(".", importPathList);
+
             if (!imports.contains(importPath)) {
                 imports.add(importPath);
             }
+
+            if ((importPath.startsWith("java.") || importPath.startsWith("pt.up.fe."))
+                    && importer.tryClassOf(importPath).isEmpty()) {
+                reports.add(newError(imp,
+                        "Imported class does not exist: " + importPath));
+            }
         }
 
-        var classDecl = root.getObject("classNode", JmmNode.class);
-        SpecsCheck.checkArgument(CLASS_DECL.check(classDecl), () -> "Expected a class declaration: " + classDecl);
+        var classDecls = root.getChildren(CLASS_DECL);
+        SpecsCheck.checkArgument(!classDecls.isEmpty(), () -> "Expected at least one class declaration.");
+
+        var classDecl = classDecls.get(0);
+
+        for (int i = 1; i < classDecls.size(); i++) {
+            String extraClassName = classDecls.get(i).get("name");
+            if (!imports.contains(extraClassName)) {
+                imports.add(extraClassName);
+            }
+        }
 
         this.className = classDecl.get("name");
         var fullyQualifiedName = packagePath.isEmpty() ? className : packagePath + "." + className;
@@ -147,6 +169,10 @@ public class JmmSymbolTableBuilder {
                     .orElseThrow(() -> new RuntimeException("No type found for var " + name));
 
             var type = buildType(typeNode);
+
+            if (isVoidType(type)) {
+                reports.add(newError(varDecl, "Field '" + name + "' cannot be of type void."));
+            }
 
             fields.add(new Symbol(type, name));
         }
@@ -225,6 +251,10 @@ public class JmmSymbolTableBuilder {
 
             JmmType varType = buildType(typeNode);
 
+            if (isVoidType(varType)) {
+                reports.add(newError(varDecl, "Local variable '" + varName + "' cannot be of type void."));
+            }
+
             if (names.contains(varName)) {
                 reports.add(newError(varDecl, "Duplicate local variable name '" + varName +
                         "' in method '" + method.get("name") + "'"));
@@ -239,11 +269,39 @@ public class JmmSymbolTableBuilder {
 
 
     private List<MethodSymbol> buildMethods(JmmNode classDecl) {
+        List<MethodSymbol> methods = new ArrayList<>();
 
-        return classDecl.getChildren(METHOD_DECL).stream()
-                .map(this::buildMethod)
-                .toList();
+        for (JmmNode methodNode : classDecl.getChildren(METHOD_DECL)) {
+            MethodSymbol newMethod = buildMethod(methodNode);
 
+            boolean isDuplicate = false;
+            for (MethodSymbol existingMethod : methods) {
+                if (existingMethod.name().equals(newMethod.name()) &&
+                        existingMethod.parameters().size() == newMethod.parameters().size()) {
+
+                    boolean paramsMatch = true;
+                    for (int i = 0; i < newMethod.parameters().size(); i++) {
+                        if (!existingMethod.parameters().get(i).type().equals(newMethod.parameters().get(i).type())) {
+                            paramsMatch = false;
+                            break;
+                        }
+                    }
+
+                    if (paramsMatch) {
+                        isDuplicate = true;
+                        break;
+                    }
+                }
+            }
+
+            if (isDuplicate) {
+                reports.add(newError(methodNode, "Duplicate method declaration: " + newMethod.name()));
+            } else {
+                methods.add(newMethod);
+            }
+        }
+
+        return methods;
     }
 
     private MethodSymbol buildMethod(JmmNode method) {
@@ -297,4 +355,14 @@ public class JmmSymbolTableBuilder {
         }
 
         return new MethodSymbol(methodName, returnType, params, locals, isStatic, visibility);
-    }}
+    }
+    private boolean isVoidType(JmmType type) {
+        if (type.equals(JmmPrimitiveType.VOID)) {
+            return true;
+        }
+        if (type instanceof JmmArrayType arr) {
+            return isVoidType(arr.itemType());
+        }
+        return false;
+    }
+}

@@ -183,7 +183,6 @@ public class TypeUtils {
             return JmmClassType.ofInstance(name, true);
         }
 
-        // Própria classe usada como alvo de chamada estática (ex: MyClass.staticMethod())
         if (name.equals(table.getClassName()) || table.getFullyQualifiedName().endsWith("." + name)) {
             return JmmClassType.ofInstance(table.getFullyQualifiedName(), true); // staticRef=true
         }
@@ -204,17 +203,39 @@ public class TypeUtils {
 
         if (targetType instanceof JmmClassType classType) {
             var typeName = classType.name();
+            boolean isThisClass = typeName.equals(table.getClassName());
 
-            var localMethods = table.getMethods(methodName);
-            if (!localMethods.isEmpty()) {
-                return localMethods.getFirst().returnType();
-            }
+            var importer = pt.up.fe.comp.jmm.analysis.table.reflection.Importer.fromThisClassPath();
 
-            var importedST = table.getImportedSymbolTable(typeName);
-            if (importedST.isPresent()) {
-                var methods = importedST.get().getMethods(methodName);
-                if (!methods.isEmpty()) {
-                    return methods.getFirst().returnType();
+            if (isThisClass) {
+                var localMethods = table.getMethods(methodName);
+                if (!localMethods.isEmpty()) {
+                    return localMethods.getFirst().returnType();
+                }
+
+                String superName = table.getSuper();
+                if (superName != null) {
+                    String fqnSuper = table.getImportedFullyQualifiedName(superName).orElse(superName);
+                    var superST = importer.getSymbolTableOf(fqnSuper);
+                    if (superST.isEmpty()) superST = importer.tryImplicitImport(fqnSuper);
+
+                    if (superST.isPresent()) {
+                        var superMethods = superST.get().getMethods(methodName);
+                        if (!superMethods.isEmpty()) {
+                            return superMethods.getFirst().returnType();
+                        }
+                    }
+                }
+            } else {
+                String resolveName = table.getImportedFullyQualifiedName(typeName).orElse(typeName);
+                var importedST = importer.getSymbolTableOf(resolveName);
+                if (importedST.isEmpty()) importedST = importer.tryImplicitImport(resolveName);
+
+                if (importedST.isPresent()) {
+                    var methods = importedST.get().getMethods(methodName);
+                    if (!methods.isEmpty()) {
+                        return methods.getFirst().returnType();
+                    }
                 }
             }
 
@@ -229,9 +250,25 @@ public class TypeUtils {
 
     private JmmType getImplicitThisCallType(JmmNode implicitCallExpr) {
         var methodName = implicitCallExpr.get("method");
-        var methods = table.getMethods(methodName);
-        if (!methods.isEmpty()) {
-            return methods.getFirst().returnType();
+
+        var localMethods = table.getMethods(methodName);
+        if (!localMethods.isEmpty()) {
+            return localMethods.getFirst().returnType();
+        }
+
+        String superName = table.getSuper();
+        if (superName != null) {
+            String fqnSuper = table.getImportedFullyQualifiedName(superName).orElse(superName);
+            var importer = pt.up.fe.comp.jmm.analysis.table.reflection.Importer.fromThisClassPath();
+            var superST = importer.getSymbolTableOf(fqnSuper);
+            if (superST.isEmpty()) superST = importer.tryImplicitImport(fqnSuper);
+
+            if (superST.isPresent()) {
+                var superMethods = superST.get().getMethods(methodName);
+                if (!superMethods.isEmpty()) {
+                    return superMethods.getFirst().returnType();
+                }
+            }
         }
         return JmmClassType.ofInstance("unknown", false);
     }

@@ -85,6 +85,9 @@ public class CallCheckVisitor extends AnalysisVisitor {
         }
 
         if (!(targetType instanceof JmmClassType classType)) {
+            addReport(Report.newError(Stage.SEMANTIC,
+                    NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
+                    "Cannot call method '" + methodName + "' on a primitive or array type.", null));
             return null;
         }
 
@@ -131,19 +134,24 @@ public class CallCheckVisitor extends AnalysisVisitor {
 
             if (importedST.isPresent()) {
                 var methods = importedST.get().getMethods(methodName);
+
                 if (methods.isEmpty()) {
-                    addReport(Report.newError(Stage.SEMANTIC,
-                            NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
-                            "Method '" + methodName + "' not found in imported class '" + resolveName + "'", null));
+                    if (resolveName.startsWith("java.") || resolveName.startsWith("pt.up.fe.")) {
+                        addReport(Report.newError(Stage.SEMANTIC,
+                                NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
+                                "Method '" + methodName + "' not found in imported class '" + resolveName + "'", null));
+                    }
                     return null;
                 }
 
                 var matchedMethod = findMatchingOverload(methodCall, methods, typeUtils);
 
                 if (matchedMethod == null) {
-                    addReport(Report.newError(Stage.SEMANTIC,
-                            NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
-                            "No overload of method '" + methodName + "' matches the provided arguments", null));
+                    if (resolveName.startsWith("java.") || resolveName.startsWith("pt.up.fe.")) {
+                        addReport(Report.newError(Stage.SEMANTIC,
+                                NodeUtils.getLine(methodCall), NodeUtils.getColumn(methodCall),
+                                "No overload of method '" + methodName + "' matches the provided arguments", null));
+                    }
                     return null;
                 }
 

@@ -20,6 +20,10 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
     public void buildVisitor() {
         addVisit(JmmKind.METHOD_DECL, this::visitMethodDecl);
         addVisit(JmmKind.ASSIGN_STMT, this::visitAssignStmt);
+        addVisit(JmmKind.FOR_ASSIGN_INIT, this::visitAssignStmt);
+        addVisit(JmmKind.FOR_ASSIGN_ITER, this::visitAssignStmt);
+        addVisit(JmmKind.FOR_VAR_INIT, this::visitAssignStmt);
+        addVisit(JmmKind.FOR_EXPR_ITER, this::visitInvalidForIter);
     }
 
     private Void visitMethodDecl(JmmNode method, SymbolTable table) {
@@ -29,7 +33,7 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
     }
 
     private Void visitAssignStmt(JmmNode assignStmt, SymbolTable table) {
-        var varName = assignStmt.get("var");
+        String varName = assignStmt.hasAttribute("var") ? assignStmt.get("var") : assignStmt.get("name");
 
         if ("this".equals(varName)) {
             addReport(Report.newError(Stage.SEMANTIC,
@@ -45,7 +49,12 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         currentMethod = table.getMethod(signature).orElse(null);
         if (currentMethod == null) return null;
 
-        var valueExpr = assignStmt.getChild(0);
+        JmmNode valueExpr;
+        if (JmmKind.FOR_VAR_INIT.check(assignStmt)) {
+            valueExpr = assignStmt.getChild(1);
+        } else {
+            valueExpr = assignStmt.getChild(0);
+        }
 
         JmmType leftType = getVarType(varName, table);
         if (leftType == null) return null;
@@ -54,6 +63,9 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         try {
             rightType = TypeUtils.with(table).getExprType(valueExpr);
         } catch (Exception e) {
+            addReport(Report.newError(Stage.SEMANTIC,
+                    NodeUtils.getLine(assignStmt), NodeUtils.getColumn(assignStmt),
+                    "Failed to evaluate expression type: " + e.getMessage(), null));
             return null;
         }
 
@@ -118,6 +130,10 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         String rightName = rightClass.name();
         if (leftName.equals(rightName)) return true;
 
+        if (leftName.equals("int") || leftName.equals("boolean") || rightName.equals("int") || rightName.equals("boolean")) {
+            return false;
+        }
+
         if(leftName.equals("Object") || leftName.equals("java.lang.Object")) {
             return true;
         }
@@ -126,9 +142,7 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         String currentSimple = table.getClassName();
         String superFQN = table.getSuperFullyQualifiedName();
 
-        // Se o lado direito é 'this' (tipo da classe atual)
         if (rightName.equals(currentFQN) || rightName.equals(currentSimple)) {
-            // Só é válido se o lado esquerdo é a própria classe ou a superclasse
             if (leftName.equals(currentFQN) || leftName.equals(currentSimple)) return true;
             if (superFQN != null) {
                 String superSimple = superFQN.contains(".")
@@ -148,7 +162,6 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         }
     }
 
-    // Resolve nomes simples de java.lang ("Name" para "java.lang.Name")
     private String toFQN(String name) {
         if (name.contains(".")) return name;
         try {
@@ -157,5 +170,12 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         } catch (ClassNotFoundException e) {
             return name;
         }
+    }
+
+    private Void visitInvalidForIter(JmmNode exprIter, SymbolTable table) {
+        addReport(Report.newError(Stage.SEMANTIC,
+                NodeUtils.getLine(exprIter), NodeUtils.getColumn(exprIter),
+                "For loop increment must be a valid assignment.", null));
+        return null;
     }
 }

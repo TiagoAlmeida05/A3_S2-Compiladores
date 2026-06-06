@@ -37,7 +37,7 @@ BLOCK_COMMENT  : '/*' .*? '*/' -> skip;
 // Program Structure
 
 program
-    : packageDecl? importDecl* classNode=classDecl EOF
+    : packageDecl? importDecl* classNode=classDecl (classDecl)* EOF
     ;
 
 importDecl
@@ -83,9 +83,9 @@ visibility
 
 // Variables and Parameters
 
-varDecl
-    : visibility? typeNode=type name=ID ';'
-    | visibility? typeNode=type name=ID '=' expr ';'
+varDecl locals [boolean isStatic=false]
+    : visibility? (STATIC {$isStatic=true;})? typeNode=type name=ID ';'
+    | visibility? (STATIC {$isStatic=true;})? typeNode=type name=ID '=' expr ';'
     ;
 
 param
