@@ -5,6 +5,7 @@ import pt.up.fe.comp.jmm.analysis.table.SymbolTable;
 import pt.up.fe.comp.jmm.analysis.table.type.JmmType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmArrayType;
 import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmClassType;
+import pt.up.fe.comp.jmm.analysis.table.type.impls.JmmPrimitiveType;
 import pt.up.fe.comp.jmm.ast.JmmNode;
 import pt.up.fe.comp.jmm.report.Report;
 import pt.up.fe.comp.jmm.report.Stage;
@@ -114,7 +115,9 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
     }
 
     private boolean isAssignable(JmmType leftType, JmmType rightType, SymbolTable table) {
-        if (rightType instanceof JmmClassType rc && rc.name().equals("unknown")) return true;
+        if (rightType instanceof JmmClassType rc && rc.name().equals("unknown")) {
+            return !leftType.equals(JmmPrimitiveType.BOOLEAN);
+        }
 
         if (leftType instanceof JmmArrayType leftArr && rightType instanceof JmmArrayType rightArr) {
             if (countDimensions(rightArr) <= countDimensions(leftArr) &&
