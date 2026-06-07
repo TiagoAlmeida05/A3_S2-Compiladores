@@ -49,15 +49,26 @@ public class AssignmentCheckVisitor extends AnalysisVisitor {
         currentMethod = table.getMethod(signature).orElse(null);
         if (currentMethod == null) return null;
 
+        JmmType leftType = getVarType(varName, table);
+        if (leftType == null) return null;
+
+        if (JmmKind.FOR_ASSIGN_INIT.check(assignStmt) ||
+                JmmKind.FOR_VAR_INIT.check(assignStmt) ||
+                JmmKind.FOR_ASSIGN_ITER.check(assignStmt)) {
+
+            if (!leftType.equals(TypeUtils.intType())) {
+                addReport(Report.newError(Stage.SEMANTIC,
+                        NodeUtils.getLine(assignStmt), NodeUtils.getColumn(assignStmt),
+                        "For loop control variable must be of type int.", null));
+            }
+        }
+
         JmmNode valueExpr;
         if (JmmKind.FOR_VAR_INIT.check(assignStmt)) {
             valueExpr = assignStmt.getChild(1);
         } else {
             valueExpr = assignStmt.getChild(0);
         }
-
-        JmmType leftType = getVarType(varName, table);
-        if (leftType == null) return null;
 
         JmmType rightType;
         try {

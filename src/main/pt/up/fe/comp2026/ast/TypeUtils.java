@@ -203,40 +203,27 @@ public class TypeUtils {
 
         if (targetType instanceof JmmClassType classType) {
             var typeName = classType.name();
-            boolean isThisClass = typeName.equals(table.getClassName());
-
-            var importer = pt.up.fe.comp.jmm.analysis.table.reflection.Importer.fromThisClassPath();
+            boolean isThisClass = typeName.equals(table.getClassName()) || typeName.equals(table.getFullyQualifiedName());
 
             if (isThisClass) {
-                var localMethods = table.getMethods(methodName);
-                if (!localMethods.isEmpty()) {
-                    return localMethods.getFirst().returnType();
+                var localMethod = table.getMethods().stream()
+                        .filter(m -> m.name().equals(methodName))
+                        .findFirst();
+                if (localMethod.isPresent()) {
+                    return localMethod.get().returnType();
                 }
 
-                String superName = table.getSuper();
-                if (superName != null) {
-                    String fqnSuper = table.getImportedFullyQualifiedName(superName).orElse(superName);
-                    var superST = importer.getSymbolTableOf(fqnSuper);
-                    if (superST.isEmpty()) superST = importer.tryImplicitImport(fqnSuper);
+                String superFQN = table.getSuperFullyQualifiedName();
+                if (superFQN == null) superFQN = table.getSuper();
 
-                    if (superST.isPresent()) {
-                        var superMethods = superST.get().getMethods(methodName);
-                        if (!superMethods.isEmpty()) {
-                            return superMethods.getFirst().returnType();
-                        }
-                    }
+                if (superFQN != null) {
+                    JmmType refType = getMethodReturnTypeViaReflection(superFQN, methodName);
+                    if (refType != null) return refType;
                 }
             } else {
-                String resolveName = table.getImportedFullyQualifiedName(typeName).orElse(typeName);
-                var importedST = importer.getSymbolTableOf(resolveName);
-                if (importedST.isEmpty()) importedST = importer.tryImplicitImport(resolveName);
-
-                if (importedST.isPresent()) {
-                    var methods = importedST.get().getMethods(methodName);
-                    if (!methods.isEmpty()) {
-                        return methods.getFirst().returnType();
-                    }
-                }
+                String fqn = table.getImportedFullyQualifiedName(typeName).orElse(typeName);
+                JmmType refType = getMethodReturnTypeViaReflection(fqn, methodName);
+                if (refType != null) return refType;
             }
 
             if (classType.staticRef() || table.getImports().stream()
@@ -251,26 +238,41 @@ public class TypeUtils {
     private JmmType getImplicitThisCallType(JmmNode implicitCallExpr) {
         var methodName = implicitCallExpr.get("method");
 
-        var localMethods = table.getMethods(methodName);
-        if (!localMethods.isEmpty()) {
-            return localMethods.getFirst().returnType();
+        var localMethod = table.getMethods().stream()
+                .filter(m -> m.name().equals(methodName))
+                .findFirst();
+        if (localMethod.isPresent()) {
+            return localMethod.get().returnType();
+        }
+        String superFQN = table.getSuperFullyQualifiedName();
+        if (superFQN == null) superFQN = table.getSuper();
+
+        if (superFQN != null) {
+            JmmType refType = getMethodReturnTypeViaReflection(superFQN, methodName);
+            if (refType != null) return refType;
         }
 
-        String superName = table.getSuper();
-        if (superName != null) {
-            String fqnSuper = table.getImportedFullyQualifiedName(superName).orElse(superName);
-            var importer = pt.up.fe.comp.jmm.analysis.table.reflection.Importer.fromThisClassPath();
-            var superST = importer.getSymbolTableOf(fqnSuper);
-            if (superST.isEmpty()) superST = importer.tryImplicitImport(fqnSuper);
+        return JmmClassType.ofInstance("unknown", false);
+    }
 
-            if (superST.isPresent()) {
-                var superMethods = superST.get().getMethods(methodName);
-                if (!superMethods.isEmpty()) {
-                    return superMethods.getFirst().returnType();
+    private JmmType getMethodReturnTypeViaReflection(String className, String methodName) {
+        try {
+            Class<?> clazz = Class.forName(className);
+            for (java.lang.reflect.Method m : clazz.getMethods()) {
+                if (m.getName().equals(methodName)) {
+                    Class<?> ret = m.getReturnType();
+                    if (ret == int.class) return JmmPrimitiveType.INT;
+                    if (ret == boolean.class) return JmmPrimitiveType.BOOLEAN;
+                    if (ret == void.class) return JmmPrimitiveType.VOID;
+                    if (ret.isArray()) {
+                        if (ret.getComponentType() == int.class) return new JmmArrayType(JmmPrimitiveType.INT, 1);
+                        return new JmmArrayType(JmmClassType.ofInstance(ret.getComponentType().getName(), true), 1);
+                    }
+                    return JmmClassType.ofInstance(ret.getName(), true);
                 }
             }
-        }
-        return JmmClassType.ofInstance("unknown", false);
+        } catch (Exception ignored) {}
+        return null;
     }
 
     private JmmType getVarAccessType(JmmNode varAccess) {

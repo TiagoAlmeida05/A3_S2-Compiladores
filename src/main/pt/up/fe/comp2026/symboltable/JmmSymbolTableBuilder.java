@@ -142,9 +142,26 @@ public class JmmSymbolTableBuilder {
             superQualifiedName = resolveClassName(superName);
         }
 
-
         var fields = buildFields(classDecl);
         var methods = buildMethods(classDecl);
+
+        if (superQualifiedName != null) {
+            var superST = importer.getSymbolTableOf(superQualifiedName);
+            if (superST.isEmpty()) {
+                superST = importer.tryImplicitImport(superQualifiedName);
+            }
+
+            if (superST.isPresent()) {
+                for (MethodSymbol superMethod : superST.get().getMethods()) {
+                    boolean isOverridden = methods.stream()
+                            .anyMatch(m -> m.name().equals(superMethod.name()));
+
+                    if (!isOverridden) {
+                        methods.add(superMethod);
+                    }
+                }
+            }
+        }
 
         var symbolTable = new JmmSymbolTable(imports, fullyQualifiedName, superQualifiedName, fields, methods, importer);
 
